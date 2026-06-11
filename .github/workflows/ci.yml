@@ -1,50 +1,49 @@
 name: CI
-on:
 
+on:
   push:
     tags:
       - v*
     branches:
       - main
   pull_request:
-    types: [opened, synchronize]
     branches:
       - main
 
-jobs:
+permissions:
+  contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
   check:
-    name: lint, build, and test
+    name: make check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
+    timeout-minutes: 30
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-
       - name: Check out code
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
-      - name: Install dependencies (macOS)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: '1.26'
-        id: go
+          go-version-file: go.mod
 
+      # Placeholders for future system dependencies (e.g. libvirt client
+      # tools once e2e jobs exist). `make check` needs only Go today.
+      - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
-        run: |
-          echo "install deps (macos)"
+        run: echo "no extra macOS dependencies needed yet"
 
       - name: Install dependencies (Linux/Ubuntu)
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          echo "install deps (linux)"
+        run: echo "no extra Linux dependencies needed yet"
 
-      - name: run checks (linters, build, and unit tests)
+      - name: Run checks (lint, build, and unit tests)
         run: make check
-        shell: bash
