@@ -1,3 +1,8 @@
+[![Build Status](https://github.com/TheEasyShift/easyshift/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TheEasyShift/easyshift/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TheEasyShift/easyshift)](https://goreportcard.com/report/github.com/TheEasyShift/easyshift)
+[![Go Reference](https://pkg.go.dev/badge/github.com/TheEasyShift/easyshift.svg)](https://pkg.go.dev/github.com/TheEasyShift/easyshift)
+[![License](https://img.shields.io/github/license/TheEasyShift/easyshift?color=blue)](LICENSE)
+
 # easyshift
 
 An opinionated OpenShift installer for developers: one command takes your
