@@ -14,6 +14,16 @@ run translated.
 This is the macOS half of the standing project vision (mac + linux, NAT or
 bridge, single master). It does not change the SNO/single-master constraints.
 
+### Development environment (validated 2026-06-13)
+
+The primary dev machine is the target hardware: **macOS 26.5.1 (Tahoe), Apple
+Silicon (arm64)**, with `vfkit 0.6.3` (on `PATH`) and `vmnet-helper 0.12.0`
+(Homebrew, under `libexec`) installed. So on-hardware validation (real vfkit
+boot, vmnet-helper shared network, Rosetta, two-cluster DR) is **in scope** and
+executed on this machine, not deferred to separate hardware. CI remains Linux
+(`ubuntu-latest`), where the macOS code paths are exercised via `--simulate`
+and cross-compilation only.
+
 ### Non-goals (this phase)
 
 - Running x86-64 OpenShift under emulation. Rosetta is a userspace translation
@@ -31,26 +41,46 @@ bridge, single master). It does not change the SNO/single-master constraints.
    team that drives Apple's Virtualization.framework). No cgo, no Swift, no
    entitlement on the `easyshift` binary — vfkit ships pre-signed with the
    virtualization + Rosetta entitlements.
-3. **Networking backend:** **vmnet-helper** in shared mode, with vfkit attaching
-   to it over a socket fd (`--device virtio-net,fd=…`, a
-   `VZFileHandleNetworkDeviceAttachment`). gvproxy was considered and dropped (see
-   "Networking" below).
+3. **Networking backend:** **vmnet-helper** in shared mode, run as a **per-VM
+   sidecar** that vfkit attaches to over a socket fd (`--device
+   virtio-net,fd=…`, a `VZFileHandleNetworkDeviceAttachment`). vmnet-helper's
+   CLI *requires* `--fd FD | --socket SOCKET`, so it is paired with exactly one
+   VM rather than being a standalone network daemon (see "Networking" and "VM
+   lifecycle coupling" below). gvproxy was considered and dropped.
 4. **v1 scope:** NAT + **multi-cluster DR parity** (multiple arm64 clusters on one
    shared L2 segment that can reach each other), magic DNS, Rosetta. Bridge mode
    and real DNS deferred.
 5. **Shared subnet:** reuse `192.168.126.0/24` (same as the Linux `easyshift-nat`
-   network) so the two platforms behave identically.
+   network) so the two platforms behave identically. This requires the **per-VM
+   shared-mode** path (`--operation-mode shared --start-address 192.168.126.1
+   --subnet-mask 255.255.255.0`, same subnet for every cluster's sidecar → shared
+   L2 → DR). The macOS-26 `vmnet-broker` `--network NAME` mode is cleaner for the
+   shared network but is mutually exclusive with `--start-address/--subnet-mask`
+   (the broker owns the subnet, defaulting to `192.168.64.0/24`), so we do **not**
+   use broker mode in v1; the spike confirms shared-subnet DR.
 6. **Per-cluster IP determinism:** pin each master's IP via the **existing
    ignition static NetworkManager keyfile** (allocated from `GlobalState`),
    within the shared subnet. This already exists and behaves identically on both
    OSes, so we do **not** depend on vmnet-helper exposing per-MAC DHCP
    reservations.
-7. **vfkit / vmnet-helper distribution:** required on `PATH` (a documented
-   prerequisite, like `virsh` / `virt-install` on Linux), checked in preflight via
-   `LookPath`. Not bundled or auto-downloaded.
-8. **vmnet-helper privilege:** a one-time, **user-performed** privileged setup
-   (`sudo` or launchd install) is accepted — the macOS analog of joining the
-   `libvirt` group.
+7. **vfkit / vmnet-helper distribution:** documented prerequisites (like `virsh` /
+   `virt-install` on Linux), not bundled or auto-downloaded. `vfkit` is a normal
+   `PATH` binary. **vmnet-helper is NOT on `PATH`** — Homebrew installs it under
+   `$(brew --prefix vmnet-helper)/libexec/vmnet-helper` (upstream `install.sh`
+   uses `/opt/vmnet-helper/bin/vmnet-helper`). Preflight resolves the binary at
+   those known locations rather than via a bare `LookPath("vmnet-helper")`.
+8. **vmnet-helper privilege:** a one-time, **user-performed** setup — install the
+   shipped sudoers rule (`sudo install -m 0640
+   $(brew --prefix vmnet-helper)/share/doc/vmnet-helper/sudoers.d/vmnet-helper
+   /etc/sudoers.d/`), the macOS analog of joining the `libvirt` group. The rule
+   grants `%staff ALL=(root) NOPASSWD: <vmnet-helper path>` plus
+   `closefrom_override`, and the helper is invoked as `sudo --non-interactive
+   --close-from N <vmnet-helper> --fd M …` (the `--close-from` is required to pass
+   the socket fd through sudo). **Caveat:** the shipped rule hardcodes
+   `/opt/vmnet-helper/bin/vmnet-helper`, which does not match the Homebrew
+   libexec path; preflight must verify the NOPASSWD path matches the binary
+   easyshift actually invokes, and docs must tell brew users to adjust the rule
+   (or symlink) accordingly.
 
 ## Why vmnet-helper (and not gvproxy or raw vmnet)
 
@@ -115,16 +145,41 @@ identical except for a per-OS boot-media stage and a rename (below).
     `IsRunning` + `Start`.
   - `ImportISO` / storage-pool concepts are libvirt-only; on mac they are no-ops
     or unused because boot uses network/PXE assets (see "Boot & ignition").
-- `providers/vmnethelper` — implements `interfaces.NetworkProvisioner`. Owns the
-  single shared vmnet network used by all NAT clusters:
-  - `EnsureNetwork` → ensure a shared-mode vmnet-helper network exists on
-    `192.168.126.0/24` (same subnet as the Linux `easyshift-nat`). Idempotent.
+  - **Sidecar ownership (see "VM lifecycle coupling"):** because the network is a
+    per-VM vmnet-helper process, `Start` also spawns that sidecar (via sudo) and
+    wires its socket into vfkit's `virtio-net,fd=…`; `Stop`/`Delete` reap it.
+- `providers/vmnethelper` — implements `interfaces.NetworkProvisioner`, plus a
+  sidecar-launch seam the vfkit VMManager calls at `Start`. It does **not** own a
+  standalone network daemon (vmnet-helper requires `--fd/--socket` and is bound to
+  one VM):
+  - `EnsureNetwork` → validate/record that the shared network identity
+    (`192.168.126.0/24`, shared mode, decision 5) is the one all per-VM sidecars
+    will use. There is no separate "create the network" call to make idempotent;
+    the network materializes when the first sidecar starts. Effectively a
+    config/validation step on macOS.
   - `AddHost` / `RemoveHost` → per-cluster identity: the IP/MAC is allocated from
     `GlobalState` and pinned via the ignition static keyfile (decision 6); these
     methods record/clear that allocation. Deleting one cluster removes only its
     entry.
-  - `InspectNetwork` → report subnet / reservations / leases for `status`.
-  - Provides the socket fd that the vfkit VMManager attaches to.
+  - `InspectNetwork` → report what the provider knows for `status`.
+  - `StartSidecar(vmName, mac) (socketPath, cleanup, error)` → resolve the
+    vmnet-helper binary (decision 7), spawn it under `sudo --non-interactive
+    --close-from N … --operation-mode shared --start-address 192.168.126.1
+    --subnet-mask 255.255.255.0 --socket <path>` (decision 8), and hand the socket
+    path back to the vfkit VMManager. This is the seam that couples the two
+    providers; it lives behind a small extra interface, not the stage-facing
+    `NetworkProvisioner`.
+
+### VM lifecycle coupling (macOS-specific)
+
+On Linux the network (libvirt) and VM (libvirt) lifecycles are independent: the
+NAT network is a host-global resource and `virt-install` just attaches to it. On
+macOS the vmnet-helper process is **per VM and privileged**, so VM start and
+network attach are one operation: the vfkit VMManager, at `Start`, asks the
+vmnethelper provider for a sidecar socket, then launches vfkit attached to it;
+at `Stop`/`Delete` it tears the sidecar down. This coupling is contained inside
+`providers/vfkit` + `providers/vmnethelper`; stages and the rest of the app are
+unaffected (they still see plain `VMManager` + `NetworkProvisioner`).
 - `providers/host` — split the OS-specific checks into build-tagged files
   (`host_linux.go` / `host_darwin.go`). The darwin `HostInspector`:
   - `HasCPUVirtualization` → confirm Apple Silicon + macOS version supports
@@ -198,13 +253,15 @@ vmnet subnet and the IPs are reachable.
 ## Preflight on macOS
 
 - Apple Silicon + macOS ≥ 13 (Rosetta-for-Linux requirement).
-- `vfkit` and `vmnet-helper` present on `PATH` (documented prerequisites, like
-  `virsh` / `virt-install`; checked via `LookPath`). Not bundled or auto-downloaded.
-- **vmnet-helper privilege:** vmnet-helper needs elevation to open the vmnet
-  interface — a one-time, user-performed `sudo` or launchd install. This is the
-  macOS analog of "be in the libvirt group" and must be a clear preflight check
-  with an actionable error, plus user docs. It is a *helper* requirement, not an
-  `easyshift`-binary signing requirement.
+- `vfkit` present on `PATH`; **vmnet-helper resolved at its known install
+  locations** (`$(brew --prefix vmnet-helper)/libexec/vmnet-helper` or
+  `/opt/vmnet-helper/bin/vmnet-helper`), not via bare `LookPath` (decision 7).
+- **vmnet-helper privilege:** verify the sudoers rule is installed and its
+  `NOPASSWD` path matches the binary easyshift will invoke — concretely, that
+  `sudo --non-interactive <resolved-vmnet-helper> --version` succeeds without a
+  prompt. On failure, the preflight error must name the exact install command
+  (decision 8) and the path-mismatch caveat. This is a *helper* requirement, not
+  an `easyshift`-binary signing requirement.
 - Disk-space and TCP-dial checks are already platform-agnostic.
 
 ## Phasing
@@ -222,20 +279,27 @@ Let's Encrypt.
 
 ## Testing
 
-The existing `fakes` + `--simulate` harness abstracts all of this behind the
-interfaces, so a darwin fake wiring lets the full pipeline run in `--simulate` on
-any OS (including Linux CI). Real vfkit / vmnet-helper execution stays in
-manual / e2e territory, same as `virsh` today.
+Two layers. (1) **Unit / simulate (Linux CI + local):** the `fakes` +
+`--simulate` harness abstracts everything behind the interfaces, so the darwin
+wiring runs the full pipeline in `--simulate` and provider command/arg
+construction is unit-tested against the fake `CommandRunner` (as the libvirt
+provider already is). (2) **On-hardware (this Apple Silicon machine):** because
+the dev box is the target platform with vfkit + vmnet-helper installed, the
+real-boot path is validated here — boot an aarch64 SNO, stand up the shared
+vmnet network, confirm Rosetta in-guest, and run the two-cluster DR check. This
+is no longer deferred to separate hardware.
 
-## Open risks to validate early
+## Open risks to validate early (on this machine)
 
-- vmnet-helper multiplexing multiple vfkit VMs on one shared network for the DR
-  case. The vfkit + helper combo is proven for single VMs (CRC, lima, podman);
-  N peers on one shared segment is the least-exercised path. The two-cluster
-  spike in phase 4 is the gate.
+- vmnet-helper running one sidecar per vfkit VM, all on the same shared subnet,
+  giving guest↔guest reachability across clusters (DR) and host reachability to
+  every cluster API. Proven for single VMs (CRC, lima, podman); the N-peer
+  shared-subnet case is the least-exercised path — the two-cluster spike is the
+  gate.
 - RHCOS aarch64 live PXE assets booting under vfkit's Linux bootloader with our
   cmdline (vs. the ISO path).
-- The one-time vmnet-helper privilege install UX (clear preflight error + docs).
+- The sudoers path-mismatch (brew `libexec` vs the rule's `/opt/vmnet-helper/bin`)
+  and the `--close-from` fd-passing handshake working end to end.
 
 ## References
 
