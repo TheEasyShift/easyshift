@@ -2,6 +2,7 @@ package vmnethelper_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,6 +62,35 @@ func TestEnsureNetwork_NoShellOut(t *testing.T) {
 		if c.Name == "vmnet-helper" {
 			t.Errorf("EnsureNetwork must not spawn vmnet-helper directly (it is per-VM): %+v", c)
 		}
+	}
+}
+
+func TestPrivilegeHint_NamesSudoersPath(t *testing.T) {
+	hint := vmnethelper.PrivilegeHint("/opt/homebrew/opt/vmnet-helper/libexec/vmnet-helper")
+	for _, want := range []string{"/etc/sudoers.d/vmnet-helper", "/opt/homebrew/opt/vmnet-helper/libexec/vmnet-helper", "brew --prefix vmnet-helper"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("PrivilegeHint missing %q:\n%s", want, hint)
+		}
+	}
+}
+
+// NetworkPreflight surfaces an actionable error (with the install hint) when
+// the sudo invocation fails. A fake CommandRunner that errors on sudo stands in
+// for "passwordless sudo not configured".
+func TestNetworkPreflight_ActionableOnSudoFailure(t *testing.T) {
+	if _, err := vmnethelper.ResolveBinary(); err != nil {
+		t.Skip("vmnet-helper not installed on this runner")
+	}
+	cmd := &fakes.CommandRunner{RunFunc: func(name string, _ []string) ([]byte, error) {
+		if name == "sudo" {
+			return nil, errors.New("a password is required")
+		}
+		return nil, nil
+	}}
+	p := vmnethelper.NewNetworkProvisioner(cmd)
+	err := p.NetworkPreflight(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "/etc/sudoers.d/vmnet-helper") {
+		t.Fatalf("expected actionable sudoers hint, got %v", err)
 	}
 }
 

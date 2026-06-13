@@ -119,6 +119,16 @@ type NetworkProvisioner interface {
 	ResetNetwork(ctx context.Context, name string) error
 }
 
+// NetworkPreflighter is an optional capability a NetworkProvisioner may
+// implement to declare a host-level readiness check beyond hypervisor
+// reachability. The macOS vmnet-helper backend uses it to verify the helper
+// binary is installed and runnable under passwordless sudo; libvirt does not
+// implement it. Stages call it via a type assertion, so adding it does not
+// change the core NetworkProvisioner contract.
+type NetworkPreflighter interface {
+	NetworkPreflight(ctx context.Context) error
+}
+
 // InstallerSpec carries everything the Installer needs for one call. Binary
 // paths live here so the same Installer can service clusters built against
 // different OCP versions.

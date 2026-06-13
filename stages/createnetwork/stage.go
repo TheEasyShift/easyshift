@@ -27,12 +27,21 @@ func New(net interfaces.NetworkProvisioner, vm interfaces.VMManager) *Stage {
 
 func (*Stage) Name() string { return "create-network" }
 
-// Preflight ensures qemu:///system is reachable before NAT-mode side effects.
+// Preflight ensures the hypervisor is reachable before NAT-mode side effects,
+// plus any backend-specific network readiness (macOS vmnet-helper privilege).
 func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) error {
 	if sc.Cluster.NetworkMode != config.NetworkModeNAT {
 		return nil
 	}
-	return s.vm.CheckAccess(ctx)
+	if err := s.vm.CheckAccess(ctx); err != nil {
+		return err
+	}
+	// Optional: the vmnet-helper backend verifies the privileged sidecar can
+	// run non-interactively. libvirt does not implement this.
+	if np, ok := s.net.(interfaces.NetworkPreflighter); ok {
+		return np.NetworkPreflight(ctx)
+	}
+	return nil
 }
 
 func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
