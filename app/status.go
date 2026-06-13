@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/TheEasyShift/easyshift/config"
-	"github.com/TheEasyShift/easyshift/providers/libvirt"
 )
 
 // StatusCheck is one read-only diagnostic result.
@@ -53,23 +52,22 @@ func (cm *ClusterManager) Status(ctx context.Context, name string) (*StatusRepor
 
 func (cm *ClusterManager) checkVMState(ctx context.Context, c *config.ClusterConfig) StatusCheck {
 	vmName := fmt.Sprintf("master-0-%s", c.Name)
-	out, err := cm.deps.Cmd.Run(ctx, "virsh", "-c", libvirt.LibvirtSystemURI, "domstate", vmName)
+	running, err := cm.deps.VM.IsRunning(ctx, vmName)
 	if err != nil {
 		return StatusCheck{
 			Name:   "VM exists",
-			Detail: fmt.Sprintf("virsh domstate %s failed", vmName),
-			Hint:   "check `sudo virsh list --all`; the VM may not have been created or was undefined",
+			Detail: fmt.Sprintf("could not query VM %s state", vmName),
+			Hint:   "inspect the hypervisor (libvirt: `sudo virsh list --all`; vfkit: check the easyshift VM state dir)",
 		}
 	}
-	state := strings.TrimSpace(string(out))
-	if state != "running" {
+	if !running {
 		return StatusCheck{
 			Name:   "VM running",
-			Detail: state,
-			Hint:   "start the VM with `sudo virsh start " + vmName + "` or inspect it with `sudo virsh console " + vmName + "`",
+			Detail: "not running",
+			Hint:   "start the cluster with `easyshift start " + c.Name + "`",
 		}
 	}
-	return StatusCheck{Name: "VM running", OK: true, Detail: state}
+	return StatusCheck{Name: "VM running", OK: true, Detail: "running"}
 }
 
 func (cm *ClusterManager) checkARP(c *config.ClusterConfig) StatusCheck {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -37,13 +38,15 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		return err
 	}
+	plat := openshift.HostClientPlatform(runtime.GOOS, runtime.GOARCH)
+	arch := config.PayloadArch(runtime.GOARCH)
 	if _, err := os.Stat(filepath.Join(binDir, "openshift-install")); err != nil {
-		if err := s.downloadTarball(ctx, openshift.OCPClientURL(sc.Cluster.OCPVersion, "openshift-install-linux.tar.gz"), binDir); err != nil {
+		if err := s.downloadTarball(ctx, openshift.OCPClientURL(arch, sc.Cluster.OCPVersion, openshift.InstallClientTarball(plat)), binDir); err != nil {
 			return fmt.Errorf("download openshift-install: %w", err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(binDir, "oc")); err != nil {
-		if err := s.downloadTarball(ctx, openshift.OCPClientURL(sc.Cluster.OCPVersion, "openshift-client-linux.tar.gz"), binDir); err != nil {
+		if err := s.downloadTarball(ctx, openshift.OCPClientURL(arch, sc.Cluster.OCPVersion, openshift.OCClientTarball(plat)), binDir); err != nil {
 			return fmt.Errorf("download oc: %w", err)
 		}
 	}

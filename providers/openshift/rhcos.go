@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
-// OCPClientURL constructs the mirror URL for openshift-install / openshift-client.
-func OCPClientURL(version, tarball string) string {
-	return fmt.Sprintf("%s/clients/ocp/%s/%s", config.OCPMirrorURL, version, tarball)
+// OCPClientURL constructs the mirror URL for openshift-install / openshift-client
+// for a given payload architecture.
+func OCPClientURL(arch, version, tarball string) string {
+	return fmt.Sprintf("%s/clients/ocp/%s/%s", OCPMirrorURLForArch(arch), version, tarball)
 }
 
 // CoreOSInstallerURL is the mirror URL for the latest coreos-installer binary.
@@ -41,17 +41,17 @@ func IsResolvedOCPVersion(v string) bool {
 	return strings.Contains(v, ".")
 }
 
-// ReleaseTxtURL is the URL to fetch the channel's release.txt index.
-// The file starts with a "Name:      <version>" line that identifies which
-// concrete release the alias currently points at.
-func ReleaseTxtURL(channel string) string {
-	return fmt.Sprintf("%s/clients/ocp/%s/release.txt", config.OCPMirrorURL, channel)
+// ReleaseTxtURL is the URL to fetch the channel's release.txt index for a
+// payload architecture. The file starts with a "Name:      <version>" line
+// that identifies which concrete release the alias currently points at.
+func ReleaseTxtURL(arch, channel string) string {
+	return fmt.Sprintf("%s/clients/ocp/%s/release.txt", OCPMirrorURLForArch(arch), channel)
 }
 
 // ResolveOCPVersion downloads <mirror>/clients/ocp/<channel>/release.txt and
 // returns the concrete version named on its first "Name:" line. The download
 // goes through the supplied Downloader so tests can substitute a canned body.
-func ResolveOCPVersion(ctx context.Context, dl interfaces.Downloader, channel string) (string, error) {
+func ResolveOCPVersion(ctx context.Context, dl interfaces.Downloader, arch, channel string) (string, error) {
 	tmp, err := os.CreateTemp("", "release-*.txt")
 	if err != nil {
 		return "", fmt.Errorf("temp file: %w", err)
@@ -59,7 +59,7 @@ func ResolveOCPVersion(ctx context.Context, dl interfaces.Downloader, channel st
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(tmp.Name()) }()
 
-	if err := dl.Download(ctx, ReleaseTxtURL(channel), tmp.Name()); err != nil {
+	if err := dl.Download(ctx, ReleaseTxtURL(arch, channel), tmp.Name()); err != nil {
 		return "", fmt.Errorf("download release.txt for channel %q: %w", channel, err)
 	}
 	data, err := os.ReadFile(tmp.Name())

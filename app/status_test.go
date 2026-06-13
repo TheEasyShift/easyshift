@@ -84,7 +84,7 @@ func TestStatus_BridgeMode_SurfacesProblems(t *testing.T) {
 	// because the verify-master-ip stage would — correctly — refuse to create
 	// a cluster whose node is on the wrong IP.)
 	bundle.Host.ARPTable = map[string]string{c.MasterMAC: "10.99.99.99"} // wrong IP
-	bundle.Cmd.Output = []byte("shut off\n")
+	_ = deps.VM.Stop(context.Background(), "master-0-bad")               // VM shut off
 	bundle.Host.TCPReachable = map[string]error{
 		c.MasterIP + ":6443":                       errors.New("connection refused"),
 		"api." + c.Name + "." + c.Domain + ":6443": errors.New("connection refused"),

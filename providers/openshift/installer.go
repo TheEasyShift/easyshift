@@ -28,9 +28,6 @@ type coreOSStream struct {
 	} `json:"architectures"`
 }
 
-// coreOSArch is the architecture key easyshift targets in the stream JSON.
-const coreOSArch = "x86_64"
-
 // SNOInstallationDisk is the in-VM device where bootstrap-in-place writes
 // RHCOS. easyshift attaches every VM disk via virtio (see libvirt.go), so
 // /dev/vda is the only primary disk present at install time.
@@ -187,7 +184,11 @@ func (i *OpenShiftInstaller) CoreOSLiveISOURL(ctx context.Context, spec interfac
 	if err := i.cmd.RunStreaming(ctx, &stdout, &stderr, spec.InstallerPath, "coreos", "print-stream-json"); err != nil {
 		return "", fmt.Errorf("coreos print-stream-json: %w: %s", err, stderr.String())
 	}
-	return parseCoreOSLiveISO(stdout.Bytes(), coreOSArch)
+	arch := spec.Arch
+	if arch == "" {
+		arch = "x86_64"
+	}
+	return parseCoreOSLiveISO(stdout.Bytes(), arch)
 }
 
 func parseCoreOSLiveISO(data []byte, arch string) (string, error) {

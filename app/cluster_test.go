@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/TheEasyShift/easyshift/interfaces"
 	"github.com/TheEasyShift/easyshift/providers/fakes"
 )
+
+// bootMediaStageName is the OS-dependent boot-media stage in the pipeline:
+// macOS publishes PXE assets, Linux embeds the ignition ISO.
+func bootMediaStageName() string {
+	if runtime.GOOS == "darwin" {
+		return "publish-pxe-assets"
+	}
+	return "embed-ignition-iso"
+}
 
 // newTestCluster returns a ClusterConfig suitable for the happy-path tests
 // (pure SNO: 1 master, 0 workers, NAT mode).
@@ -122,12 +132,16 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		t.Errorf("NAT network arg: got %q", got)
 	}
 	// Master boots from the default-pool ISO uploaded by embed-ignition-iso.
-	wantISO := "/var/lib/libvirt/images/easyshift-demo-master.iso"
-	if got := bundle.VM.Created[0].BootISO; got != wantISO {
-		t.Errorf("master BootISO: got %q want %q", got, wantISO)
-	}
-	if len(bundle.VM.ImportedISOs) != 1 || bundle.VM.ImportedISOs[0] != "easyshift-demo-master.iso" {
-		t.Errorf("expected ISO import of easyshift-demo-master.iso, got %v", bundle.VM.ImportedISOs)
+	// macOS uses the PXE boot path instead (publish-pxe-assets), so the ISO
+	// import / BootISO assertions apply only off-darwin.
+	if runtime.GOOS != "darwin" {
+		wantISO := "/var/lib/libvirt/images/easyshift-demo-master.iso"
+		if got := bundle.VM.Created[0].BootISO; got != wantISO {
+			t.Errorf("master BootISO: got %q want %q", got, wantISO)
+		}
+		if len(bundle.VM.ImportedISOs) != 1 || bundle.VM.ImportedISOs[0] != "easyshift-demo-master.iso" {
+			t.Errorf("expected ISO import of easyshift-demo-master.iso, got %v", bundle.VM.ImportedISOs)
+		}
 	}
 	if got, want := len(cfg.Clusters), 1; got != want {
 		t.Fatalf("cfg.Clusters len: got %d want %d", got, want)
@@ -139,7 +153,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 	if !bundle.Installer.CreatedSingleNodeIgn {
 		t.Error("expected Installer.CreateSingleNodeIgnition to be called")
 	}
-	if !bundle.Installer.EmbeddedISO {
+	if runtime.GOOS != "darwin" && !bundle.Installer.EmbeddedISO {
 		t.Error("expected Installer.EmbedIgnitionInISO to be called")
 	}
 	if !bundle.Installer.WaitedForInstall {
@@ -164,8 +178,8 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		"download-rhcos",
 		"generate-ssh-key",
 		"generate-ignition",
-		"embed-ignition-iso",
-		"create-libvirt-network",
+		bootMediaStageName(),
+		"create-network",
 		"create-master-vms",
 		"verify-master-ip",
 		"upsert-dns",
@@ -190,7 +204,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 func TestCreateCluster_ResumesAfterFailure(t *testing.T) {
 	cfg, deps, bundle := newTestEnv(t)
 
-	// Fail at create-libvirt-network on the first attempt.
+	// Fail at create-network on the first attempt.
 	wantErr := errors.New("simulated net failure")
 	bundle.Net.Err = wantErr
 
@@ -202,15 +216,15 @@ func TestCreateCluster_ResumesAfterFailure(t *testing.T) {
 	}
 
 	// register-cluster + allocate-network + ensure-cluster-dir should have
-	// applied; create-libvirt-network should NOT be in state.json.
+	// applied; create-network should NOT be in state.json.
 	state := readState(t, cfg.ConfigDir, "demo")
 	for _, name := range []string{"register-cluster", "allocate-network", "ensure-cluster-dir"} {
 		if _, ok := state.Stages[name]; !ok {
 			t.Errorf("first pass: expected stage %q applied", name)
 		}
 	}
-	if _, ok := state.Stages["create-libvirt-network"]; ok {
-		t.Errorf("first pass: create-libvirt-network must NOT be marked applied")
+	if _, ok := state.Stages["create-network"]; ok {
+		t.Errorf("first pass: create-network must NOT be marked applied")
 	}
 
 	// Heal the fake and re-run. Resume must pick up the existing cluster

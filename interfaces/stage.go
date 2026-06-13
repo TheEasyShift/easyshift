@@ -3,6 +3,7 @@ package interfaces
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/TheEasyShift/easyshift/config"
@@ -78,6 +79,7 @@ func (sc *StageContext) InstallerSpec() InstallerSpec {
 		Cluster:             sc.Cluster,
 		InstallerPath:       filepath.Join(bin, "openshift-install"),
 		CoreOSInstallerPath: filepath.Join(bin, "coreos-installer"),
+		Arch:                config.PayloadArch(runtime.GOARCH),
 	}
 }
 
