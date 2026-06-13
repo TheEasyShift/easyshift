@@ -38,6 +38,19 @@ bridge, single master). It does not change the SNO/single-master constraints.
 4. **v1 scope:** NAT + **multi-cluster DR parity** (multiple arm64 clusters on one
    shared L2 segment that can reach each other), magic DNS, Rosetta. Bridge mode
    and real DNS deferred.
+5. **Shared subnet:** reuse `192.168.126.0/24` (same as the Linux `easyshift-nat`
+   network) so the two platforms behave identically.
+6. **Per-cluster IP determinism:** pin each master's IP via the **existing
+   ignition static NetworkManager keyfile** (allocated from `GlobalState`),
+   within the shared subnet. This already exists and behaves identically on both
+   OSes, so we do **not** depend on vmnet-helper exposing per-MAC DHCP
+   reservations.
+7. **vfkit / vmnet-helper distribution:** required on `PATH` (a documented
+   prerequisite, like `virsh` / `virt-install` on Linux), checked in preflight via
+   `LookPath`. Not bundled or auto-downloaded.
+8. **vmnet-helper privilege:** a one-time, **user-performed** privileged setup
+   (`sudo` or launchd install) is accepted — the macOS analog of joining the
+   `libvirt` group.
 
 ## Why vmnet-helper (and not gvproxy or raw vmnet)
 
@@ -104,11 +117,12 @@ identical except for a per-OS boot-media stage and a rename (below).
     or unused because boot uses network/PXE assets (see "Boot & ignition").
 - `providers/vmnethelper` — implements `interfaces.NetworkProvisioner`. Owns the
   single shared vmnet network used by all NAT clusters:
-  - `EnsureNetwork` → ensure a shared-mode vmnet-helper network exists with our
-    chosen subnet (candidate: reuse `192.168.126.0/24` to mirror Linux). Idempotent.
-  - `AddHost` / `RemoveHost` → per-cluster identity: a vmnet DHCP reservation
-    where exposed, otherwise tracked in `GlobalState` and pinned via the ignition
-    static keyfile. Deleting one cluster removes only its reservation.
+  - `EnsureNetwork` → ensure a shared-mode vmnet-helper network exists on
+    `192.168.126.0/24` (same subnet as the Linux `easyshift-nat`). Idempotent.
+  - `AddHost` / `RemoveHost` → per-cluster identity: the IP/MAC is allocated from
+    `GlobalState` and pinned via the ignition static keyfile (decision 6); these
+    methods record/clear that allocation. Deleting one cluster removes only its
+    entry.
   - `InspectNetwork` → report subnet / reservations / leases for `status`.
   - Provides the socket fd that the vfkit VMManager attaches to.
 - `providers/host` — split the OS-specific checks into build-tagged files
@@ -184,10 +198,10 @@ vmnet subnet and the IPs are reachable.
 ## Preflight on macOS
 
 - Apple Silicon + macOS ≥ 13 (Rosetta-for-Linux requirement).
-- `vfkit` and `vmnet-helper` present (on PATH, or downloaded/pinned per-version
-  like the OpenShift binaries — to be decided).
+- `vfkit` and `vmnet-helper` present on `PATH` (documented prerequisites, like
+  `virsh` / `virt-install`; checked via `LookPath`). Not bundled or auto-downloaded.
 - **vmnet-helper privilege:** vmnet-helper needs elevation to open the vmnet
-  interface — run via `sudo` or installed once as a launchd daemon. This is the
+  interface — a one-time, user-performed `sudo` or launchd install. This is the
   macOS analog of "be in the libvirt group" and must be a clear preflight check
   with an actionable error, plus user docs. It is a *helper* requirement, not an
   `easyshift`-binary signing requirement.
@@ -221,10 +235,7 @@ manual / e2e territory, same as `virsh` today.
   spike in phase 4 is the gate.
 - RHCOS aarch64 live PXE assets booting under vfkit's Linux bootloader with our
   cmdline (vs. the ISO path).
-- Whether vmnet-helper exposes per-MAC DHCP reservations directly, or we rely on
-  the ignition static-keyfile pin within our chosen subnet.
-- Bundling vs. requiring `vfkit` / `vmnet-helper` on PATH, and the one-time
-  vmnet-helper privilege install UX.
+- The one-time vmnet-helper privilege install UX (clear preflight error + docs).
 
 ## References
 
