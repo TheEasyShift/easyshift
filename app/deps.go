@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -19,26 +20,37 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/redhat"
 	"github.com/TheEasyShift/easyshift/providers/tls"
 	"github.com/TheEasyShift/easyshift/providers/truststore"
+	"github.com/TheEasyShift/easyshift/providers/vfkit"
+	"github.com/TheEasyShift/easyshift/providers/vmnethelper"
 )
 
-// NewProductionDeps wires real implementations of every dependency, rooted
-// at cfg.ConfigDir. host is the host IP that VMs can reach (for file-server
-// URLs). This is the single place that knows the concrete provider types.
+// NewProductionDeps wires real implementations of every dependency for the
+// host OS, rooted at cfg.ConfigDir. host is the host IP that VMs can reach
+// (for file-server URLs). The compute + network providers differ by OS
+// (libvirt on Linux, vfkit + vmnet-helper on macOS); everything else is shared.
 func NewProductionDeps(cfg *config.Config, hostIP string) (interfaces.Deps, error) {
+	if runtime.GOOS == "darwin" {
+		return NewDarwinDeps(cfg, hostIP)
+	}
+	return newLinuxDeps(cfg, hostIP)
+}
+
+// baseDeps builds the OS-independent dependency bag and returns the shared
+// CommandRunner so the caller can construct the per-OS compute + network
+// providers. VM and Net are left nil for the caller to fill in.
+func baseDeps(cfg *config.Config, hostIP string) (interfaces.Deps, interfaces.CommandRunner, error) {
 	cmd := exec.NewExecCommandRunner()
 	dl := exec.NewHTTPDownloader()
 
 	httpRoot := filepath.Join(cfg.ConfigDir, "http")
 	files, err := fileserver.NewHTTPFileServer(httpRoot, hostIP, cfg.WebPort)
 	if err != nil {
-		return interfaces.Deps{}, fmt.Errorf("init file server: %w", err)
+		return interfaces.Deps{}, nil, fmt.Errorf("init file server: %w", err)
 	}
 
 	return interfaces.Deps{
 		Cmd:        cmd,
 		Download:   dl,
-		VM:         libvirt.NewLibvirtVMManager(cmd),
-		Net:        libvirt.NewLibvirtNetworkProvisioner(cmd),
 		Installer:  openshift.NewOpenShiftInstaller(cmd),
 		Files:      files,
 		CSR:        csr.NewOCCSRApprover(cmd),
@@ -54,7 +66,31 @@ func NewProductionDeps(cfg *config.Config, hostIP string) (interfaces.Deps, erro
 		NewLocalCertIssuer: func(caDir string) (interfaces.CertIssuer, error) {
 			return localca.New(caDir), nil
 		},
-	}, nil
+	}, cmd, nil
+}
+
+// newLinuxDeps wires the libvirt-backed compute + networking.
+func newLinuxDeps(cfg *config.Config, hostIP string) (interfaces.Deps, error) {
+	deps, cmd, err := baseDeps(cfg, hostIP)
+	if err != nil {
+		return interfaces.Deps{}, err
+	}
+	deps.VM = libvirt.NewLibvirtVMManager(cmd)
+	deps.Net = libvirt.NewLibvirtNetworkProvisioner(cmd)
+	return deps, nil
+}
+
+// NewDarwinDeps wires the macOS backend: vfkit compute + vmnet-helper
+// networking. Everything else (installer, fileserver, CSR, DNS, ...) is shared
+// with the Linux wiring via baseDeps.
+func NewDarwinDeps(cfg *config.Config, hostIP string) (interfaces.Deps, error) {
+	deps, cmd, err := baseDeps(cfg, hostIP)
+	if err != nil {
+		return interfaces.Deps{}, err
+	}
+	deps.VM = vfkit.NewVMManager(cmd, filepath.Join(cfg.ConfigDir, "vfkit"))
+	deps.Net = vmnethelper.NewNetworkProvisioner(cmd)
+	return deps, nil
 }
 
 // newProductionDNSManager returns a libdns-backed DNSManager when a token is

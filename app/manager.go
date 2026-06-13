@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -18,8 +19,8 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/openshift"
 	"github.com/TheEasyShift/easyshift/stages/allocatenetwork"
 	"github.com/TheEasyShift/easyshift/stages/applytlscerts"
-	"github.com/TheEasyShift/easyshift/stages/createlibvirtnetwork"
 	"github.com/TheEasyShift/easyshift/stages/createmastervms"
+	"github.com/TheEasyShift/easyshift/stages/createnetwork"
 	"github.com/TheEasyShift/easyshift/stages/downloadbinaries"
 	"github.com/TheEasyShift/easyshift/stages/downloadrhcos"
 	"github.com/TheEasyShift/easyshift/stages/embedignitioniso"
@@ -28,6 +29,7 @@ import (
 	"github.com/TheEasyShift/easyshift/stages/generateignition"
 	"github.com/TheEasyShift/easyshift/stages/generatesshkey"
 	"github.com/TheEasyShift/easyshift/stages/mergekubeconfig"
+	"github.com/TheEasyShift/easyshift/stages/publishpxeassets"
 	"github.com/TheEasyShift/easyshift/stages/registercluster"
 	"github.com/TheEasyShift/easyshift/stages/upsertdns"
 	"github.com/TheEasyShift/easyshift/stages/verifymasterip"
@@ -61,6 +63,13 @@ func NewClusterManager(cfg *config.Config, deps interfaces.Deps) *ClusterManager
 // the lifecycle and its dependency graph.
 func (cm *ClusterManager) buildStages() []interfaces.Stage {
 	d := cm.deps
+	// Boot media differs by host OS: Linux embeds ignition into a live ISO and
+	// uploads it to a libvirt storage pool; macOS publishes PXE-style assets
+	// (kernel/initrd/rootfs + ignition over HTTP) for vfkit's Linux bootloader.
+	bootMedia := interfaces.Stage(embedignitioniso.New(d.Installer, d.VM))
+	if runtime.GOOS == "darwin" {
+		bootMedia = publishpxeassets.New(d.Files)
+	}
 	return []interfaces.Stage{
 		registercluster.New(),
 		allocatenetwork.New(),
@@ -70,8 +79,8 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		downloadrhcos.New(d.Installer, d.Download),
 		generatesshkey.New(d.Cmd, d.Host),
 		generateignition.New(d.Installer, d.DNS, d.Host),
-		embedignitioniso.New(d.Installer, d.VM),
-		createlibvirtnetwork.New(d.Net, d.VM),
+		bootMedia,
+		createnetwork.New(d.Net, d.VM),
 		createmastervms.New(d.VM, d.Host),
 		verifymasterip.New(d.Host),
 		waitforinstall.New(d.Installer, d.CSR, d.Hostname, d.VM),
@@ -107,7 +116,7 @@ func (cm *ClusterManager) Create(ctx context.Context, c *config.ClusterConfig) e
 	// Resolve channel aliases (e.g. "stable") to a concrete version before any
 	// stage runs. Idempotent: a resumed cluster already has a concrete version.
 	if !openshift.IsResolvedOCPVersion(c.OCPVersion) {
-		resolved, err := openshift.ResolveOCPVersion(ctx, cm.deps.Download, c.OCPVersion)
+		resolved, err := openshift.ResolveOCPVersion(ctx, cm.deps.Download, config.PayloadArch(runtime.GOARCH), c.OCPVersion)
 		if err != nil {
 			return fmt.Errorf("resolve OCP version %q: %w", c.OCPVersion, err)
 		}

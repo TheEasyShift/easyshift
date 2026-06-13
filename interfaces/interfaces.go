@@ -129,6 +129,10 @@ type InstallerSpec struct {
 	SSHPublicKey        string
 	InstallerPath       string
 	CoreOSInstallerPath string
+	// Arch is the payload architecture key ("x86_64" / "aarch64") for mirror +
+	// stream-json lookups. Set from runtime.GOARCH by the InstallerSpec builder;
+	// empty defaults to "x86_64".
+	Arch string
 	// Out, if non-nil, receives the streaming stdout+stderr of the wait-for
 	// commands (stages tee it to terminal + log file).
 	Out io.Writer

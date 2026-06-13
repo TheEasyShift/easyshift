@@ -1,8 +1,9 @@
-// Package createlibvirtnetwork attaches a NAT-mode cluster to the single
-// shared NAT network: it ensures that network exists (a host-global resource)
-// and adds this cluster's master DHCP reservation. In bridge mode every
-// method is a no-op.
-package createlibvirtnetwork
+// Package createnetwork attaches a NAT-mode cluster to the single shared NAT
+// network: it ensures that network exists (a host-global resource) and adds
+// this cluster's master DHCP reservation. In bridge mode every method is a
+// no-op. The implementation is backend-neutral (it only uses the
+// NetworkProvisioner interface), so it serves both libvirt and vmnet-helper.
+package createnetwork
 
 import (
 	"context"
@@ -18,13 +19,13 @@ type Stage struct {
 	vm  interfaces.VMManager
 }
 
-// New returns the create-libvirt-network stage. vm is used only for the
-// libvirt-reachability preflight.
+// New returns the create-network stage. vm is used only for the
+// hypervisor-reachability preflight.
 func New(net interfaces.NetworkProvisioner, vm interfaces.VMManager) *Stage {
 	return &Stage{net: net, vm: vm}
 }
 
-func (*Stage) Name() string { return "create-libvirt-network" }
+func (*Stage) Name() string { return "create-network" }
 
 // Preflight ensures qemu:///system is reachable before NAT-mode side effects.
 func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) error {
