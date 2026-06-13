@@ -8,9 +8,11 @@
 
 **Tech Stack:** Go 1.24, cobra CLI, the project's interface/provider/stage/app layering, the `providers/fakes` test doubles, `make test` (`go test ./...`).
 
-**Scope of THIS plan (CI-verifiable foundation):** Tasks 1–9 below produce software that compiles, passes `make test`, and runs the macOS pipeline under `--simulate` on Linux. The design doc is `docs/superpowers/specs/2026-06-13-macos-apple-silicon-support-design.md`.
+**Environment:** the dev machine is the target hardware — macOS 26.5.1 (Tahoe), Apple Silicon — with `vfkit 0.6.3` (on `PATH`) and `vmnet-helper 0.12.0` (Homebrew, at `/opt/homebrew/opt/vmnet-helper/libexec/vmnet-helper`) installed. `make test`, the `go build`, and the on-hardware boot all run here natively (arm64); the Linux path is the cross-compile here. CI is `ubuntu-latest`.
 
-**Out of scope (follow-up plan, needs Apple Silicon hardware):** booting a real RHCOS aarch64 guest under vfkit, the network/PXE boot stage validation, Rosetta-in-guest binfmt, and the two-cluster DR spike (spec "Open risks"). Tasks 7 (PXE assets) and 8 (Rosetta config) build the *artifacts* and are unit-tested here, but their real-boot behavior is validated in the follow-up.
+**Scope of THIS plan:** two phases. **Phase A (Tasks 1–9):** the provider/wiring/refactor foundation — compiles, passes `make test`, cross-builds, and runs the macOS pipeline under `--simulate`. All provider command/arg construction is unit-tested against the fake `CommandRunner`. **Phase B (Tasks 10–13):** on-hardware validation executed on this machine — install the vmnet-helper privilege, boot a real aarch64 SNO, confirm Rosetta in-guest, and run the two-cluster DR check. The design doc is `docs/superpowers/specs/2026-06-13-macos-apple-silicon-support-design.md`.
+
+**Networking model correction (drives Task 4):** `vmnet-helper` is **not** a standalone network daemon. Its CLI *requires* `--fd FD | --socket SOCKET` and is bound to exactly one VM — it is a per-VM privileged sidecar. So there is no one-time "create the shared network" shell-out; the shared `192.168.126.0/24` network materializes when each VM's sidecar starts in `--operation-mode shared` with the same subnet. VM start and network attach are therefore coupled inside `providers/vfkit` + `providers/vmnethelper` (see the spec's "VM lifecycle coupling"). Phase A unit-tests the sidecar argv builder; Phase B wires the live `sudo` spawn + fd handshake.
 
 **Conventions for every commit in this plan:** use `git commit -s` and end the message with `Assisted-by: Claude Code/claude-opus-4-8` (per repo CLAUDE.md). Run `make test` (gofmt + vet + `go test ./...`) before each commit; it must pass.
 
@@ -712,13 +714,19 @@ Assisted-by: Claude Code/claude-opus-4-8"
 
 ---
 
-## Task 4: `providers/vmnethelper` — NetworkProvisioner over vmnet-helper
+## Task 4: `providers/vmnethelper` — NetworkProvisioner + per-VM sidecar seam
 
 **Files:**
 - Create: `providers/vmnethelper/vmnethelper.go`
 - Create: `providers/vmnethelper/vmnethelper_test.go`
 
-Context: vmnet-helper owns the shared vmnet network on `192.168.126.0/24` (matching the Linux `easyshift-nat` subnet). Per-cluster IP determinism is via the ignition static keyfile (decision 6), so `AddHost`/`RemoveHost` only need to track allocation; the network is created in shared mode with our subnet via `--operation-mode=shared --subnet-mask --start-address --end-address`. `EnsureNetwork` builds those args; we unit-test the arg list. The socket fd handed to vfkit is established at run time in the wiring (out of scope for the arg test).
+Context (corrected — see plan header "Networking model correction"): `vmnet-helper` is **not** a standalone daemon. It requires `--fd|--socket` and is bound to one VM, so there is no one-time network-create shell-out. The shared `192.168.126.0/24` network materializes when each VM's sidecar runs in shared mode with the same subnet. This task delivers three pure, unit-testable pieces and the stage-facing `NetworkProvisioner`:
+
+1. `ResolveBinary()` — find the vmnet-helper binary at its known install locations (brew `libexec`, upstream `/opt/vmnet-helper/bin`), since it is **not** on `PATH` (decision 7).
+2. `SidecarArgv(socketPath, subnet)` — build the per-VM `vmnet-helper` argument list (shared mode, our gateway/subnet). This is the contract the live `sudo` spawn (Phase B, Task 11) uses.
+3. The `NetworkProvisioner` methods, which on macOS are bookkeeping/validation (no shell-out): `EnsureNetwork` validates the shared-network identity, `AddHost`/`RemoveHost` track `GlobalState` allocation (IPs are pinned via the ignition keyfile, decision 6), `InspectNetwork` reports what we know.
+
+The verifiable contract here is `ResolveBinary` + `SidecarArgv`; the privileged `sudo` spawn + fd handshake is wired and tested on hardware in Phase B.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -746,35 +754,48 @@ func hasArgContaining(args []string, sub string) bool {
 	return false
 }
 
-func TestEnsureNetwork_SharedModeArgs(t *testing.T) {
-	cmd := &fakes.CommandRunner{}
-	p := vmnethelper.NewNetworkProvisioner(cmd)
-
-	if err := p.EnsureNetwork(context.Background(), interfaces.NetworkSpec{
-		Name:   "easyshift-nat",
-		Subnet: "192.168.126",
-	}); err != nil {
-		t.Fatalf("EnsureNetwork: %v", err)
-	}
-
-	var call *fakes.CommandCall
-	for i := range cmd.Calls {
-		if cmd.Calls[i].Name == "vmnet-helper" {
-			call = &cmd.Calls[i]
+// SidecarArgv must produce a shared-mode, our-subnet, socket-bound invocation.
+func TestSidecarArgv(t *testing.T) {
+	args := vmnethelper.SidecarArgv("/tmp/vm.sock", "192.168.126")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--operation-mode", "shared", "--start-address", "192.168.126.1", "--subnet-mask", "255.255.255.0"} {
+		if !hasArgContaining(args, want) {
+			t.Errorf("SidecarArgv missing %q: %s", want, joined)
 		}
 	}
-	if call == nil {
-		t.Fatal("expected a vmnet-helper invocation")
+	if !hasArgContaining(args, "/tmp/vm.sock") {
+		t.Errorf("SidecarArgv must bind the socket path: %s", joined)
 	}
-	joined := strings.Join(call.Args, " ")
-	if !hasArgContaining(call.Args, "--operation-mode=shared") {
-		t.Errorf("missing --operation-mode=shared: %s", joined)
+}
+
+// ResolveBinary returns an error (not a bogus path) when vmnet-helper is absent,
+// so preflight can produce an actionable message. On a machine with it installed
+// it returns an existing path.
+func TestResolveBinary_Behavior(t *testing.T) {
+	path, err := vmnethelper.ResolveBinary()
+	if err != nil {
+		if path != "" {
+			t.Errorf("on error, path must be empty, got %q", path)
+		}
+		return // not installed on this runner (e.g. Linux CI) — acceptable
 	}
-	if !hasArgContaining(call.Args, "192.168.126.1") {
-		t.Errorf("start-address (gateway) should be the .1 of our subnet: %s", joined)
+	if !strings.Contains(path, "vmnet-helper") {
+		t.Errorf("resolved path does not look like vmnet-helper: %q", path)
 	}
-	if !hasArgContaining(call.Args, "--subnet-mask=255.255.255.0") {
-		t.Errorf("missing --subnet-mask: %s", joined)
+}
+
+// EnsureNetwork is bookkeeping on macOS: it does NOT shell out (the network
+// comes up with the first per-VM sidecar). It must not invoke vmnet-helper.
+func TestEnsureNetwork_NoShellOut(t *testing.T) {
+	cmd := &fakes.CommandRunner{}
+	p := vmnethelper.NewNetworkProvisioner(cmd)
+	if err := p.EnsureNetwork(context.Background(), interfaces.NetworkSpec{Name: "easyshift-nat", Subnet: "192.168.126"}); err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	for _, c := range cmd.Calls {
+		if c.Name == "vmnet-helper" {
+			t.Errorf("EnsureNetwork must not spawn vmnet-helper directly (it is per-VM): %+v", c)
+		}
 	}
 }
 
@@ -794,88 +815,127 @@ func TestAddRemoveHost_NoError(t *testing.T) {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `go test ./providers/vmnethelper/ -v`
-Expected: FAIL — `undefined: vmnethelper.NewNetworkProvisioner`.
+Expected: FAIL — `undefined: vmnethelper.SidecarArgv` / `vmnethelper.ResolveBinary` / `vmnethelper.NewNetworkProvisioner`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 Create `providers/vmnethelper/vmnethelper.go`:
 
 ```go
-// Package vmnethelper implements interfaces.NetworkProvisioner on macOS by
-// driving vmnet-helper, which owns a shared-mode vmnet network (the macOS
-// analog of the shared libvirt easyshift-nat network). Per-cluster IPs are
+// Package vmnethelper implements interfaces.NetworkProvisioner on macOS and
+// builds the per-VM vmnet-helper sidecar invocation. vmnet-helper is a
+// privileged, per-VM process (it requires --fd/--socket), not a standalone
+// daemon, so the shared 192.168.126.0/24 network materializes when each VM's
+// sidecar starts in shared mode with the same subnet. Per-cluster IPs are
 // pinned via the ignition static keyfile, so AddHost/RemoveHost only track
-// allocation rather than mutating DHCP reservations.
+// allocation.
 package vmnethelper
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
-// NetworkProvisioner manages the shared vmnet network via vmnet-helper.
+// candidateBinaries are the known install locations for vmnet-helper, which is
+// NOT on PATH: Homebrew puts it under the formula's libexec; upstream
+// install.sh uses /opt/vmnet-helper/bin.
+func candidateBinaries() []string {
+	paths := []string{"/opt/vmnet-helper/bin/vmnet-helper"}
+	if out, err := exec.Command("brew", "--prefix", "vmnet-helper").Output(); err == nil {
+		prefix := filepath.Clean(string(trimNL(out)))
+		paths = append([]string{filepath.Join(prefix, "libexec", "vmnet-helper")}, paths...)
+	}
+	return paths
+}
+
+func trimNL(b []byte) []byte {
+	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
+// ResolveBinary returns the absolute path to an installed vmnet-helper, or an
+// error naming where it looked so preflight can guide the user.
+func ResolveBinary() (string, error) {
+	cands := candidateBinaries()
+	for _, p := range cands {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("vmnet-helper not found (looked in %v); install with `brew install vmnet-helper`", cands)
+}
+
+// SidecarArgv builds the per-VM vmnet-helper argument list: shared mode on our
+// subnet (gateway = subnet.1), bound to socketPath. The privileged spawn wraps
+// these args with `sudo --non-interactive --close-from N` (Phase B).
+func SidecarArgv(socketPath, subnet string) []string {
+	return []string{
+		"--socket", socketPath,
+		"--operation-mode", "shared",
+		"--start-address", subnet + ".1",
+		"--end-address", subnet + ".254",
+		"--subnet-mask", "255.255.255.0",
+	}
+}
+
+// NetworkProvisioner is the stage-facing network contract. On macOS its methods
+// are bookkeeping/validation; the real network work happens per-VM via the
+// sidecar (started by the vfkit VMManager using SidecarArgv).
 type NetworkProvisioner struct {
 	cmd interfaces.CommandRunner
 }
 
-// NewNetworkProvisioner returns a vmnet-helper-backed NetworkProvisioner.
+// NewNetworkProvisioner returns the macOS NetworkProvisioner.
 func NewNetworkProvisioner(cmd interfaces.CommandRunner) *NetworkProvisioner {
 	return &NetworkProvisioner{cmd: cmd}
 }
 
-// EnsureNetwork ensures the shared-mode vmnet network exists on spec.Subnet.0/24
-// with the host as the .1 gateway. Idempotent: vmnet-helper treats an existing
-// shared network with the same subnet as success.
-func (p *NetworkProvisioner) EnsureNetwork(ctx context.Context, spec interfaces.NetworkSpec) error {
-	gateway := spec.Subnet + ".1"
-	end := spec.Subnet + ".254"
-	args := []string{
-		"--operation-mode=shared",
-		"--start-address=" + gateway,
-		"--end-address=" + end,
-		"--subnet-mask=255.255.255.0",
-	}
-	if _, err := p.cmd.Run(ctx, "vmnet-helper", args...); err != nil {
-		return fmt.Errorf("vmnet-helper ensure shared network %s: %w", spec.Name, err)
+// EnsureNetwork validates the shared-network identity. It does NOT shell out:
+// the shared network comes up with the first per-VM sidecar (see package doc).
+func (p *NetworkProvisioner) EnsureNetwork(_ context.Context, spec interfaces.NetworkSpec) error {
+	if spec.Subnet == "" {
+		return fmt.Errorf("vmnethelper: empty subnet in NetworkSpec")
 	}
 	return nil
 }
 
-// AddHost records a cluster's IP/MAC allocation. The actual pinning happens in
-// the guest via the ignition static keyfile, so there is no vmnet mutation here.
+// AddHost / RemoveHost track GlobalState allocation; IP pinning is via the
+// ignition keyfile, so there is no vmnet mutation here.
 func (p *NetworkProvisioner) AddHost(_ context.Context, _ string, _ interfaces.DHCPHost) error {
 	return nil
 }
 
-// RemoveHost clears a cluster's allocation. No vmnet mutation (see AddHost).
 func (p *NetworkProvisioner) RemoveHost(_ context.Context, _ string, _ interfaces.DHCPHost) error {
 	return nil
 }
 
-// InspectNetwork reports whether the shared network is up. Reservations/leases
-// are not tracked at the vmnet layer (IPs are pinned via ignition), so only
-// Exists is populated in this phase.
-func (p *NetworkProvisioner) InspectNetwork(ctx context.Context, _ string) (interfaces.NetworkInfo, error) {
+// InspectNetwork reports what the provider knows. Reservations/leases live in
+// GlobalState + the ignition keyfile, not the vmnet layer.
+func (p *NetworkProvisioner) InspectNetwork(_ context.Context, _ string) (interfaces.NetworkInfo, error) {
 	return interfaces.NetworkInfo{Exists: true}, nil
 }
 
-// ResetNetwork is a no-op: the shared network is recreated idempotently by
-// EnsureNetwork, and there is no persistent libvirt-style definition to undefine.
+// ResetNetwork is a no-op: there is no persistent network definition to tear down.
 func (p *NetworkProvisioner) ResetNetwork(_ context.Context, _ string) error { return nil }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `go test ./providers/vmnethelper/ -v`
-Expected: PASS.
+Expected: PASS. (`TestResolveBinary_Behavior` passes both ways: returns a real path on this Mac, returns the no-op early path on Linux CI.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add providers/vmnethelper/
-git commit -s -m "vmnethelper: add NetworkProvisioner over vmnet-helper shared mode
+git commit -s -m "vmnethelper: NetworkProvisioner + per-VM sidecar argv/binary resolver
 
 Assisted-by: Claude Code/claude-opus-4-8"
 ```
@@ -1331,12 +1391,12 @@ Run: `grep -rn 'interfaces.InstallerSpec{' --include='*.go' .`. At each construc
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Verify the darwin pipeline runs under simulate (on Linux)**
+- [ ] **Step 6: Verify the darwin pipeline runs under simulate**
 
-Add a simulate test that forces the darwin stage selection, or run the existing simulate entrypoint with the darwin deps. Minimal: confirm the binary builds for darwin and the existing `--simulate` suite still passes:
+On this Apple Silicon machine the darwin wiring is the *native* path, so `make test` already exercises it. Also confirm the Linux cross-build still works:
 
-Run: `GOOS=darwin GOARCH=arm64 go build ./... && make test`
-Expected: build succeeds; `make test` PASS.
+Run: `make test && GOOS=linux GOARCH=amd64 go build ./...`
+Expected: `make test` PASS; cross-build succeeds. (On Linux CI the reverse holds: `make test` runs the native Linux path and `GOOS=darwin GOARCH=arm64 go build ./...` cross-builds the mac path.)
 
 - [ ] **Step 7: Commit**
 
@@ -1351,28 +1411,142 @@ Assisted-by: Claude Code/claude-opus-4-8"
 
 ## Self-Review
 
-**Spec coverage:**
+**Spec coverage (Phase A):**
 - vfkit VMManager (process supervisor) → Task 3. ✓
-- vmnet-helper NetworkProvisioner, shared mode, 192.168.126.0/24 → Task 4. ✓
+- vmnet-helper NetworkProvisioner + per-VM sidecar argv/resolver → Task 4. ✓
 - runtime.GOOS dispatch + NewDarwinDeps → Task 9. ✓
 - Build-tagged HostInspector → Task 2. ✓
 - Arch parameterization (mirror, client tarball, coreOS arch) → Task 1. ✓
-- Network/PXE boot stage replacing embed-ignition-iso → Task 7 (artifact builder + selection; real boot deferred). ✓
-- Rosetta guest config → Task 8 (fragment builder; injection deferred). ✓
+- Network/PXE boot stage replacing embed-ignition-iso → Task 7 (artifact builder + selection; real boot in Task 12). ✓
+- Rosetta guest config → Task 8 (fragment builder; injection in Task 11/13). ✓
 - createlibvirtnetwork → createnetwork rename → Task 5. ✓
 - status.go via VMManager.IsRunning → Task 6. ✓
 - Carried-over config/allocation layer → unchanged (no task needed). ✓
-- Preflight (vfkit/vmnet-helper on PATH, Apple Silicon, vmnet-helper privilege) → partially: Task 2 covers CPU virt; **gap:** PATH `LookPath` checks for `vfkit`/`vmnet-helper` and the privilege preflight are not their own task. These belong in `createmastervms`/`createnetwork` preflight. **Action:** add as a sub-step during Task 3/4 execution, or a small follow-up task; flagged here rather than silently dropped.
-- Real-hardware boot, Rosetta-in-guest, two-cluster DR spike → explicitly out of scope (follow-up plan). ✓
 
-**Placeholder scan:** Tasks 7 and 8 contain `Apply` bodies whose file-copy/injection logic is deferred to the hardware follow-up. This is called out explicitly (not a silent TODO) because that logic can only be validated against real RHCOS assets on Apple Silicon; the pure, testable parts (`KernelCmdline`, `RosettaButaneFragment`, stage selection, `Name()`) are fully implemented and tested here.
+**Spec coverage (Phase B — on this Apple Silicon machine):**
+- vmnet-helper privilege (sudoers) + preflight (`ResolveBinary` + sudo check) → Task 10. ✓
+- Live sidecar `sudo` spawn + fd handshake + detached vfkit + Rosetta injection wiring → Task 11. ✓
+- Real single aarch64 SNO boot end-to-end → Task 12. ✓
+- Rosetta-in-guest verification + two-cluster DR check → Task 13. ✓
 
-**Type consistency:** `PayloadArch`, `HostClientPlatform`, `OCPClientURL(arch, …)`, `InstallClientTarball`/`OCClientTarball`, `OCPMirrorURLForArch` are defined in Task 1 and used consistently in Tasks 1 and 9. `NewVMManager(cmd, stateDir)` (Task 3) and `NewNetworkProvisioner(cmd)` (Task 4) match their use in `NewDarwinDeps` (Task 9). `InstallerSpec.Arch` is added in Task 1 and set in Task 9. `fakes.VMManager.Running` is introduced/verified in Task 6.
+**Placeholder scan:** Phase A Tasks 7 and 8 implement the pure, tested parts (`KernelCmdline`, `RosettaButaneFragment`, stage selection, `Name()`); their `Apply` side effects (asset copy, ignition injection) are completed and validated in Phase B (Tasks 11–13) against real RHCOS assets on this machine — not silent TODOs, but explicitly sequenced.
 
-**Known follow-up tasks (next plan, Apple Silicon hardware required):**
-1. Production detached `vfkit` spawn writing the pid file (Task 3 note).
-2. `publishpxeassets.Apply` real asset copy + cmdline persistence on the cluster; `createmastervms` reading `KernelArgs` on darwin.
-3. Rosetta fragment injection into the generated ignition on darwin.
-4. vfkit↔vmnet-helper socket-fd wiring (`--device virtio-net,fd=…`).
-5. `vfkit`/`vmnet-helper` `LookPath` preflight + vmnet-helper privilege check + user docs.
-6. Two-cluster DR spike: guest↔guest reachability and host reaching both APIs.
+**Type consistency:** `PayloadArch`, `HostClientPlatform`, `OCPClientURL(arch, …)`, `InstallClientTarball`/`OCClientTarball`, `OCPMirrorURLForArch` are defined in Task 1 and used consistently in Tasks 1 and 9. `NewVMManager(cmd, stateDir)` (Task 3), `NewNetworkProvisioner(cmd)`, `SidecarArgv`, `ResolveBinary` (Task 4) match their use in `NewDarwinDeps` (Task 9) and Phase B. `InstallerSpec.Arch` is added in Task 1 and set in Task 9. `fakes.VMManager.Running` is introduced/verified in Task 6.
+
+**Post-plan (genuinely out of scope):** macOS bridge mode (extra entitlements), real-DNS / Let's Encrypt, and >2-cluster scale beyond the DR proof.
+
+---
+
+# Phase B — on-hardware validation (this Apple Silicon machine)
+
+Phase B runs on the macOS 26.5.1 dev box. These tasks involve real `sudo`,
+real VM boots, and downloads from `mirror.openshift.com`, so they are not
+pure-unit-testable; each lists explicit manual verification with expected
+observable output. A real RHCOS pull secret is required (the existing
+`easyshift` Red Hat login flow provides it).
+
+## Task 10: vmnet-helper privilege + preflight
+
+**Files:**
+- Modify: `stages/createmastervms/stage.go` (preflight) or `stages/createnetwork/stage.go` — add the macOS sidecar preflight (guard with `runtime.GOOS == "darwin"`).
+- Create: `providers/vmnethelper/preflight.go` + `preflight_test.go`
+
+- [ ] **Step 1: Install the sudoers rule (user action, once)**
+
+Run:
+```bash
+VH=$(brew --prefix vmnet-helper)
+# The shipped rule names /opt/vmnet-helper/bin/vmnet-helper, which does not exist
+# on a brew install. Point the NOPASSWD path at the real libexec binary.
+sudo sh -c "sed 's#/opt/vmnet-helper/bin/vmnet-helper#$VH/libexec/vmnet-helper#' \
+  '$VH/share/doc/vmnet-helper/sudoers.d/vmnet-helper' > /etc/sudoers.d/vmnet-helper && chmod 0640 /etc/sudoers.d/vmnet-helper"
+sudo visudo -cf /etc/sudoers.d/vmnet-helper
+```
+Expected: `… parsed OK`.
+
+- [ ] **Step 2: Verify passwordless invocation**
+
+Run: `sudo --non-interactive "$(brew --prefix vmnet-helper)/libexec/vmnet-helper" --version`
+Expected: prints a version, no password prompt.
+
+- [ ] **Step 3: Write the preflight + a test for the resolver path**
+
+Add `Preflight` logic (in the macOS-guarded stage) that calls `vmnethelper.ResolveBinary()` and runs `sudo --non-interactive <bin> --version`, returning an actionable error naming the install command on failure. Unit-test the message construction:
+
+```go
+func TestPreflightMessage_NamesInstallCommand(t *testing.T) {
+	msg := vmnethelper.PrivilegeHint("/opt/homebrew/opt/vmnet-helper/libexec/vmnet-helper")
+	if !strings.Contains(msg, "/etc/sudoers.d/vmnet-helper") {
+		t.Errorf("hint must name the sudoers path: %s", msg)
+	}
+}
+```
+Implement `PrivilegeHint(binPath string) string` in `providers/vmnethelper/preflight.go` returning the exact install command from Step 1.
+
+- [ ] **Step 4: Run unit test + commit**
+
+Run: `go test ./providers/vmnethelper/ -v` → PASS.
+```bash
+git add providers/vmnethelper/ stages/
+git commit -s -m "vmnethelper: add privilege preflight + sudoers hint
+
+Assisted-by: Claude Code/claude-opus-4-8"
+```
+
+## Task 11: Live sidecar spawn + detached vfkit + Rosetta injection wiring
+
+**Files:**
+- Modify: `providers/vfkit/vfkit.go` (production `Start`: detached spawn + pidfile; obtain sidecar socket)
+- Modify: `providers/vmnethelper/vmnethelper.go` (live `StartSidecar` using `SidecarArgv` under `sudo --close-from`)
+- Modify: `stages/publishpxeassets/stage.go` (`Apply`: copy kernel/initrd/rootfs + ignition into the fileserver root; persist `KernelArgs` on the cluster)
+- Modify: the ignition generation path to merge `openshift.RosettaButaneFragment()` on darwin
+- Modify: `app/deps.go` (pass the vmnethelper sidecar launcher into `vfkit.NewVMManager`)
+
+- [ ] **Step 1: Wire the sidecar seam**
+
+Give `vfkit.NewVMManager` a sidecar launcher (an interface with `StartSidecar(vmName, mac) (socket string, stop func(), err error)`), implemented by `vmnethelper`. In `vfkit` `Start`: call `StartSidecar`, then spawn vfkit detached with `--device virtio-net,unixSocketPath=<socket>,mac=<mac>`, writing the pid to `pidPath`. In `vmnethelper.StartSidecar`: resolve the binary, build `SidecarArgv(socket, "192.168.126")`, and spawn `sudo --non-interactive --close-from 3 <bin> <args…>`.
+
+- [ ] **Step 2: Manual smoke — sidecar comes up**
+
+Run a temporary harness (or `easyshift create … --simulate=false` up to the network stage) and confirm: `pgrep -fl vmnet-helper` shows a process and a socket file exists. Expected: one vmnet-helper per VM, socket present.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add providers/vfkit/ providers/vmnethelper/ stages/publishpxeassets/ app/deps.go
+git commit -s -m "macos: wire live vmnet-helper sidecar, detached vfkit, rosetta ignition
+
+Assisted-by: Claude Code/claude-opus-4-8"
+```
+
+## Task 12: Boot a real single-node aarch64 cluster
+
+- [ ] **Step 1: Create a cluster**
+
+Run: `./easyshift create dr1 --magic-dns auto` (NAT mode; arm64 is auto-selected on this host). Authenticate to Red Hat when prompted for the pull secret.
+Expected: stages run through `publish-pxe-assets`, `create-network`, `create-master-vms`; vfkit boots; `wait-for-install` proceeds.
+
+- [ ] **Step 2: Verify convergence**
+
+Run: `./easyshift status dr1` and `oc --kubeconfig ~/.config/easyshift/clusters/dr1/auth/kubeconfig get nodes`.
+Expected: VM running (via `VMManager.IsRunning`), node `Ready`, API reachable from the host at the master IP (host is on the vmnet subnet).
+
+- [ ] **Step 3: Record results in the spec's "Open risks" section**
+
+Update the spec's risk bullets with the observed outcome (PXE boot worked / adjustments needed). Commit the doc update.
+
+## Task 13: Rosetta in-guest + two-cluster DR
+
+- [ ] **Step 1: Verify Rosetta translation in the guest**
+
+Run (via `oc debug node/…` or SSH): check `/proc/sys/fs/binfmt_misc/rosetta` exists and run an `amd64` container image (e.g. `podman run --arch amd64 …` or an `oc run` of an x86-64 image) and confirm it executes.
+Expected: x86-64 binary runs translated.
+
+- [ ] **Step 2: Two-cluster DR check**
+
+Run: `./easyshift create dr2 --magic-dns auto` (second cluster on the shared `192.168.126.0/24`). Then from dr1's node, reach dr2's API/IP and vice-versa; from the host, reach both APIs.
+Expected: guest↔guest reachability across clusters and host reaching both cluster APIs — the DR-parity gate.
+
+- [ ] **Step 3: Record the DR outcome**
+
+Update the spec "Open risks" with the two-cluster result; if the per-VM-sidecar shared-subnet model needs adjustment (e.g. fall back to macOS-26 `vmnet-broker`), capture the change as a new design decision and a follow-up task. Commit.
