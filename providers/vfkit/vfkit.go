@@ -18,6 +18,7 @@
 package vfkit
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
@@ -38,16 +43,32 @@ const (
 	phaseRun     = "run"
 )
 
+// rebootWatchPoll is how often the install-phase reboot watcher re-reads the
+// guest console; rebootWatchTimeout caps how long it waits.
+var (
+	rebootWatchPoll    = 2 * time.Second
+	rebootWatchTimeout = 30 * time.Minute
+)
+
 // VMManager supervises vfkit processes. stateDir holds one subdir per VM.
 type VMManager struct {
 	stateDir string
 	sidecar  interfaces.SidecarLauncher
+
+	mu           sync.Mutex
+	sidecarStops map[string]func() // per-VM vmnet-helper stop funcs
+	watching     map[string]bool   // VMs with an active install-reboot watcher
 }
 
 // NewVMManager returns a vfkit-backed VMManager. stateDir is a writable dir
 // (e.g. <configDir>/vfkit); sidecar starts the per-VM vmnet-helper network.
 func NewVMManager(stateDir string, sidecar interfaces.SidecarLauncher) *VMManager {
-	return &VMManager{stateDir: stateDir, sidecar: sidecar}
+	return &VMManager{
+		stateDir:     stateDir,
+		sidecar:      sidecar,
+		sidecarStops: map[string]func(){},
+		watching:     map[string]bool{},
+	}
 }
 
 type launchSpec struct {
@@ -114,12 +135,20 @@ func (m *VMManager) launch(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	phase := m.phase(name)
+	// Replace any prior per-VM sidecar (a relaunch must not leave the old
+	// vmnet-helper bound to the socket) before starting a fresh one.
+	m.stopSidecar(name)
 	if m.sidecar != nil {
-		if _, err := m.sidecar.StartSidecar(ctx, name, m.sockPath(name)); err != nil {
+		stop, err := m.sidecar.StartSidecar(ctx, name, m.sockPath(name))
+		if err != nil {
 			return fmt.Errorf("vfkit %s: start network sidecar: %w", name, err)
 		}
+		m.mu.Lock()
+		m.sidecarStops[name] = stop
+		m.mu.Unlock()
 	}
-	args := m.buildArgs(name, ls, m.phase(name))
+	args := m.buildArgs(name, ls, phase)
 	cmd := exec.Command("vfkit", args...)
 	// Capture vfkit's own stdout/stderr (boot params, fatal errors) — distinct
 	// from the guest serial console (console.log) — so launch failures are
@@ -133,7 +162,90 @@ func (m *VMManager) launch(ctx context.Context, name string) error {
 	}
 	// Detach: we track the VM via --pidfile, not this handle.
 	_ = cmd.Process.Release()
+
+	// Install phase: vfkit reloads the live kernel on every guest reboot (no
+	// stop-on-reboot in Virtualization.framework), so bootstrap-in-place's
+	// post-install reboot would re-run the installer forever. Watch the guest
+	// console for that first reboot, then switch to the EFI run phase to boot
+	// the now-installed disk.
+	if phase == phaseInstall {
+		m.mu.Lock()
+		if !m.watching[name] {
+			m.watching[name] = true
+			go m.watchInstallReboot(name)
+		}
+		m.mu.Unlock()
+	}
 	return nil
+}
+
+// watchInstallReboot polls the guest console during the install phase and, on
+// the first reboot, transitions the VM to the EFI run phase.
+func (m *VMManager) watchInstallReboot(name string) {
+	defer func() {
+		m.mu.Lock()
+		delete(m.watching, name)
+		m.mu.Unlock()
+	}()
+	deadline := time.Now().Add(rebootWatchTimeout)
+	for time.Now().Before(deadline) {
+		if m.phase(name) != phaseInstall {
+			return // already transitioned (or VM gone)
+		}
+		if data, err := os.ReadFile(m.consolePath(name)); err == nil && rebootDetected(data) {
+			logrus.Infof("vfkit %s: install-phase guest rebooted; switching to EFI boot of the installed disk", name)
+			m.transitionToRun(name)
+			return
+		}
+		time.Sleep(rebootWatchPoll)
+	}
+	logrus.Warnf("vfkit %s: install-reboot watcher timed out after %s", name, rebootWatchTimeout)
+}
+
+// transitionToRun force-stops the install-phase VM and relaunches it in the EFI
+// run phase (booting the installed disk).
+func (m *VMManager) transitionToRun(name string) {
+	m.forceStop(name)
+	if err := m.setPhase(name, phaseRun); err != nil {
+		logrus.Warnf("vfkit %s: set run phase: %v", name, err)
+		return
+	}
+	if err := m.launch(context.Background(), name); err != nil {
+		logrus.Warnf("vfkit %s: relaunch in run phase: %v", name, err)
+	}
+}
+
+// rebootDetected reports whether the guest has rebooted at least once since the
+// install began. Virtualization.framework resets the guest hard on reboot
+// without flushing the usual kernel/systemd reboot lines to the serial console,
+// so the reliable signal is the per-boot "First Boot Complete" target recurring
+// (it appears exactly once per boot; >= 2 means a reboot has happened — i.e.
+// bootstrap-in-place finished its live-env phase and rebooted toward the disk).
+func rebootDetected(console []byte) bool {
+	return bytes.Count(console, []byte("First Boot Complete")) >= 2
+}
+
+// stopSidecar terminates the VM's vmnet-helper, if any.
+func (m *VMManager) stopSidecar(name string) {
+	m.mu.Lock()
+	stop := m.sidecarStops[name]
+	delete(m.sidecarStops, name)
+	m.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// forceStop kills the vfkit process promptly and tears down the sidecar (used
+// for the install->run transition, where the install VM is discarded).
+func (m *VMManager) forceStop(name string) {
+	if pid, err := m.readPID(name); err == nil {
+		if proc, err := os.FindProcess(pid); err == nil {
+			_ = proc.Signal(syscall.SIGKILL)
+		}
+	}
+	m.stopSidecar(name)
+	_ = os.Remove(m.sockPath(name))
 }
 
 // buildArgs assembles the vfkit command line for the given phase. install uses
@@ -177,13 +289,14 @@ func (m *VMManager) IsRunning(_ context.Context, name string) (bool, error) {
 	return proc.Signal(syscall.Signal(0)) == nil, nil
 }
 
-// Stop terminates the vfkit process and clears the network socket.
+// Stop terminates the vfkit process and tears down the network sidecar.
 func (m *VMManager) Stop(_ context.Context, name string) error {
 	if pid, err := m.readPID(name); err == nil {
 		if proc, err := os.FindProcess(pid); err == nil {
 			_ = proc.Signal(syscall.SIGTERM)
 		}
 	}
+	m.stopSidecar(name)
 	_ = os.Remove(m.sockPath(name))
 	return nil
 }
