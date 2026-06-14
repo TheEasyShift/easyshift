@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -84,8 +85,10 @@ func (s *Stage) applyPXE(ctx context.Context, sc *interfaces.StageContext) error
 	return nil
 }
 
-// downloadKernel fetches the kernel and decompresses it if it is gzip-compressed
-// (RHCOS aarch64 publishes a gzip'd Image; vfkit needs it uncompressed).
+// downloadKernel fetches the kernel and writes it uncompressed, which vfkit's
+// arm64 linux bootloader requires. RHCOS aarch64 ships the kernel as an EFI
+// zboot image (a PE32+ wrapper around a gzip-compressed arm64 Image), so we
+// parse the zboot header and decompress the payload.
 func (s *Stage) downloadKernel(ctx context.Context, url, dst string) error {
 	tmp := dst + ".download"
 	if err := s.dl.Download(ctx, url, tmp); err != nil {
@@ -96,18 +99,50 @@ func (s *Stage) downloadKernel(ctx context.Context, url, dst string) error {
 	if err != nil {
 		return err
 	}
-	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b { // gzip magic
-		zr, err := gzip.NewReader(bytes.NewReader(data))
-		if err != nil {
-			return fmt.Errorf("gunzip kernel: %w", err)
-		}
-		var out bytes.Buffer
-		if _, err := io.Copy(&out, zr); err != nil { //nolint:gosec // trusted mirror artifact
-			return fmt.Errorf("gunzip kernel: %w", err)
-		}
-		data = out.Bytes()
+	raw, err := uncompressKernel(data)
+	if err != nil {
+		return err
 	}
-	return os.WriteFile(dst, data, 0o644)
+	return os.WriteFile(dst, raw, 0o644)
+}
+
+// uncompressKernel returns the raw (uncompressed) kernel image. It handles
+// EFI zboot ("MZ"+"zimg" header → compressed payload), a bare gzip stream, and
+// an already-uncompressed image (returned as-is).
+func uncompressKernel(data []byte) ([]byte, error) {
+	// EFI zboot: msdos "MZ" @0, "zimg" @4, payload_offset u32 @8, payload_size
+	// u32 @12, compression_type[32] @0x18.
+	if len(data) > 0x38 && data[0] == 'M' && data[1] == 'Z' && string(data[4:8]) == "zimg" {
+		off := binary.LittleEndian.Uint32(data[8:12])
+		size := binary.LittleEndian.Uint32(data[12:16])
+		comp := string(bytes.TrimRight(data[0x18:0x38], "\x00"))
+		if int(off)+int(size) > len(data) {
+			return nil, fmt.Errorf("zboot payload [%d:%d] exceeds file size %d", off, int(off)+int(size), len(data))
+		}
+		payload := data[off : off+size]
+		switch comp {
+		case "gzip":
+			return gunzip(payload)
+		default:
+			return nil, fmt.Errorf("unsupported zboot kernel compression %q", comp)
+		}
+	}
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b { // bare gzip
+		return gunzip(data)
+	}
+	return data, nil // already uncompressed
+}
+
+func gunzip(b []byte) ([]byte, error) {
+	zr, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("gunzip kernel: %w", err)
+	}
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, zr); err != nil { //nolint:gosec // trusted mirror artifact
+		return nil, fmt.Errorf("gunzip kernel: %w", err)
+	}
+	return out.Bytes(), nil
 }
 
 func exists(p string) bool {

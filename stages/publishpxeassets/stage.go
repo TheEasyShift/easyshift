@@ -6,15 +6,25 @@
 // pool, neither available on mac). The kernel + initramfs are passed to vfkit
 // directly by local path (from the RHCOS cache), so only the rootfs and
 // ignition need HTTP serving.
+//
+// macOS has no coreos-installer to embed a static-network keyfile into the
+// live ISO, so to pin the master to its allocated IP (rather than a vmnet DHCP
+// address) we inject a NetworkManager keyfile directly into the served
+// ignition. Without it the node would DHCP an arbitrary address and the API
+// would not be reachable at the magic-DNS name.
 package publishpxeassets
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
@@ -38,9 +48,9 @@ func KernelCmdline(baseURL, cluster string) string {
 	)
 }
 
-// Apply copies the RHCOS rootfs and the SNO ignition into
-// <fileserver-root>/<cluster>/ and records the install-phase cmdline on the
-// cluster for create-master-vms.
+// Apply copies the RHCOS rootfs and the SNO ignition (with a static-network
+// keyfile injected to pin the master IP) into <fileserver-root>/<cluster>/, and
+// records the install-phase cmdline on the cluster for create-master-vms.
 func (s *Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 	cluster := sc.Cluster.Name
 	dstDir := filepath.Join(s.files.RootDir(), cluster)
@@ -50,10 +60,19 @@ func (s *Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 	if err := copyFile(sc.RHCOSRootfsPath(), filepath.Join(dstDir, "rootfs.img")); err != nil {
 		return fmt.Errorf("publish rootfs: %w", err)
 	}
-	ign := filepath.Join(sc.ClusterDir(), "bootstrap-in-place-for-live-iso.ign")
-	if err := copyFile(ign, filepath.Join(dstDir, "config.ign")); err != nil {
+
+	ign, err := os.ReadFile(filepath.Join(sc.ClusterDir(), "bootstrap-in-place-for-live-iso.ign"))
+	if err != nil {
+		return fmt.Errorf("read SNO ignition: %w", err)
+	}
+	merged, err := injectStaticNetwork(ign, sc.Cluster)
+	if err != nil {
+		return fmt.Errorf("inject static network: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, "config.ign"), merged, 0o600); err != nil {
 		return fmt.Errorf("publish ignition: %w", err)
 	}
+
 	sc.Cluster.InstallKernelCmdline = KernelCmdline(s.files.BaseURL(), cluster)
 	return nil
 }
@@ -62,6 +81,59 @@ func (s *Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 func (s *Stage) Rollback(_ context.Context, sc *interfaces.StageContext) error {
 	_ = os.RemoveAll(filepath.Join(s.files.RootDir(), sc.Cluster.Name))
 	return nil
+}
+
+// injectStaticNetwork adds a NetworkManager keyfile (pinning the master to its
+// allocated IP on the shared NAT subnet) into the ignition's storage.files,
+// preserving every other field. NetworkManager applies the keyfile during
+// ignition, so the control plane binds the allocated IP rather than a vmnet
+// DHCP lease.
+func injectStaticNetwork(ignition []byte, c *config.ClusterConfig) ([]byte, error) {
+	keyfile := natKeyfile(c)
+	entry := map[string]any{
+		"path":      "/etc/NetworkManager/system-connections/" + connID(c) + ".nmconnection",
+		"mode":      0o600,
+		"overwrite": true,
+		"contents":  map[string]any{"source": "data:;base64," + base64.StdEncoding.EncodeToString([]byte(keyfile))},
+	}
+	var m map[string]any
+	if err := json.Unmarshal(ignition, &m); err != nil {
+		return nil, fmt.Errorf("parse ignition json: %w", err)
+	}
+	storage, _ := m["storage"].(map[string]any)
+	if storage == nil {
+		storage = map[string]any{}
+		m["storage"] = storage
+	}
+	files, _ := storage["files"].([]any)
+	storage["files"] = append(files, entry)
+	return json.Marshal(m)
+}
+
+func connID(c *config.ClusterConfig) string { return "master-0-" + c.Name }
+
+// natKeyfile renders the NetworkManager keyfile pinning the master to its
+// allocated IP on the shared NAT subnet (gateway/DNS = the vmnet gateway .1).
+func natKeyfile(c *config.ClusterConfig) string {
+	gw := config.BaseNetworkRange + ".1"
+	return fmt.Sprintf(`[connection]
+id=%s
+type=ethernet
+autoconnect=true
+autoconnect-priority=999
+
+[ethernet]
+mac-address=%s
+
+[ipv4]
+method=manual
+address1=%s/24,%s
+dns=%s;
+may-fail=false
+
+[ipv6]
+method=disabled
+`, connID(c), strings.ToUpper(c.PrimaryMasterMAC()), c.PrimaryMasterIP(), gw, gw)
 }
 
 func copyFile(src, dst string) error {
