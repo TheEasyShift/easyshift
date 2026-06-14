@@ -99,6 +99,51 @@ across `easyshift` invocations and the watchdog relaunches the correct phase.
    must skip it, and `embed-ignition-iso` is not used (replaced by
    publish-pxe-assets).
 
+## Update 2026-06-14: real-boot result + the post-install reboot problem
+
+A full `easyshift create` on real hardware validated the **entire boot+install
+path**: EFI-zboot kernel decode (the live-kernel is a PE32+ `zimg` gzip
+payload — must be decompressed to the raw arm64 `Image`), vfkit boots it via
+`--bootloader linux`, the vmnet-helper sidecar networks the guest,
+bootstrap-in-place installs RHCOS to the disk, and a NetworkManager keyfile
+injected into the served ignition pins the node to its allocated IP (verified:
+node came up on `.5`, the bootstrap apiserver served there).
+
+**But the cluster never converges** — it reinstall-loops. Root cause, confirmed
+from the serial console (the install ignition + ostree-deploy repeats ~12×) and
+the vfkit source:
+
+- vfkit blocks on `waitForVMState(Stopped)` and only exits when the VM *stops*.
+- On a guest **reboot**, Virtualization.framework restarts the VM **in place**,
+  reloading the same `--bootloader linux` kernel — i.e. the *live installer*
+  again, not the installed disk. bootstrap-in-place's post-install reboot
+  therefore re-runs the installer forever.
+- So the two-phase `install→EFI` transition (which keys off vfkit *stopping*)
+  never fires: **vfkit does not stop on guest reboot.**
+- There is **no vfkit/vz flag** for stop-on-reboot or boot-disk-on-reboot
+  (checked `cmd/vfkit/main.go`, the REST API, and `Code-Hex/vz`).
+
+### Two viable fixes (each needs code + more ~40-min boot iterations)
+
+A. **Console-driven transition (smaller change).** A goroutine tails the guest
+   serial console for the first post-install reboot (the shutdown sequence after
+   the live-env bootstrap completes), then force-stops vfkit and relaunches in
+   the EFI run phase to boot the now-installed disk. Works with the current
+   network-ignition install. Risk: timing/marker fragility.
+
+B. **EFI + ISO from the start (metal-like, cleanest runtime).** Boot the live
+   ISO via `--bootloader efi` + an empty disk (spike-proven to boot). The install
+   reboots and EFI firmware boot-order falls through to the now-installed disk —
+   exactly how libvirt's `--boot hd,cdrom` works — so there is no reboot loop and
+   no transition to manage. Cost: ignition must be embedded in the ISO, and
+   macOS has no `coreos-installer`, so this needs a Go reimplementation of
+   coreos-installer's ISO ignition-embed (the `coreos-ignition` embed area
+   format).
+
+Recommendation: A is the smaller delta on the current (working) install path; B
+is architecturally cleaner but needs the embed reimplementation. Either way the
+install/boot/network/IP-pin halves are done and committed.
+
 ## Reusable spike scratch
 
 `/tmp/vfkit-spike/` holds `openshift-install` (4.22.0 mac-arm64),
