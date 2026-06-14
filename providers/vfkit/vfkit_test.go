@@ -106,6 +106,24 @@ func TestIsRunning_FalseBeforeStart(t *testing.T) {
 	}
 }
 
+func TestRebootDetected(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"single boot (install, no reboot)", "[ OK ] Reached target First Boot Complete.\nlocalhost login:\n", false},
+		{"two boots (rebooted)", "Reached target First Boot Complete.\n...install...\nReached target First Boot Complete.\n", true},
+		{"no boot banner yet", "[ OK ] Reached target Basic System.\n", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		if got := rebootDetected([]byte(c.in)); got != c.want {
+			t.Errorf("%s: rebootDetected = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestISONoops(t *testing.T) {
 	m := newMgr(t)
 	if _, err := m.ImportISO(context.Background(), "p", "v", "/tmp/x"); err != nil {
