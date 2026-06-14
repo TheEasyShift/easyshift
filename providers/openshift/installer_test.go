@@ -30,6 +30,7 @@ const streamJSON = `{
             },
             "pxe": {
               "kernel": {"location": "https://example/kernel"},
+              "initramfs": {"location": "https://example/initramfs"},
               "rootfs": {"location": "https://example/rootfs"}
             }
           }
@@ -55,6 +56,22 @@ func TestCoreOSLiveISOURL_ParsesStreamJSON(t *testing.T) {
 	want := "https://rhcos.mirror.openshift.com/art/storage/prod/streams/4.21/builds/421.94.0/x86_64/rhcos-421.94.0-live.x86_64.iso"
 	if url != want {
 		t.Errorf("live ISO url:\n  got  %q\n  want %q", url, want)
+	}
+}
+
+func TestCoreOSLivePXEURLs_ParsesStreamJSON(t *testing.T) {
+	cmd := &fakes.CommandRunner{StreamStdout: []byte(streamJSON)}
+	installer := openshift.NewOpenShiftInstaller(cmd)
+
+	pxe, err := installer.CoreOSLivePXEURLs(context.Background(), interfaces.InstallerSpec{
+		InstallerPath: "/bin/openshift-install",
+		Arch:          "x86_64",
+	})
+	if err != nil {
+		t.Fatalf("CoreOSLivePXEURLs: %v", err)
+	}
+	if pxe.KernelURL != "https://example/kernel" || pxe.InitramfsURL != "https://example/initramfs" || pxe.RootfsURL != "https://example/rootfs" {
+		t.Errorf("unexpected PXE urls: %+v", pxe)
 	}
 }
 

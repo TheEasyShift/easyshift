@@ -163,6 +163,18 @@ type Installer interface {
 	// CoreOSLiveISOURL returns the RHCOS live ISO URL this build pins, via
 	// `openshift-install coreos print-stream-json`.
 	CoreOSLiveISOURL(ctx context.Context, spec InstallerSpec) (string, error)
+	// CoreOSLivePXEURLs returns the RHCOS live kernel/initramfs/rootfs URLs
+	// (the "pxe" artifact) for the same build. The macOS vfkit backend boots
+	// these directly (no coreos-installer to embed ignition into the ISO).
+	CoreOSLivePXEURLs(ctx context.Context, spec InstallerSpec) (CoreOSLivePXE, error)
+}
+
+// CoreOSLivePXE bundles the three RHCOS live PXE asset URLs from the stream
+// JSON's metal.formats.pxe entry.
+type CoreOSLivePXE struct {
+	KernelURL    string
+	InitramfsURL string
+	RootfsURL    string
 }
 
 // FileServer abstracts the HTTP server that hosts ignition + RHCOS files.

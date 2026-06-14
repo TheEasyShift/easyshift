@@ -15,17 +15,24 @@ import (
 
 // coreOSStream is the subset of `openshift-install coreos print-stream-json`
 // we parse. The live ISO lives at
-// architectures.<arch>.artifacts.metal.formats.iso.disk.location.
+// architectures.<arch>.artifacts.metal.formats.iso.disk.location; the PXE
+// boot assets (used by the macOS vfkit linux-bootloader install phase) live at
+// architectures.<arch>.artifacts.metal.formats.pxe.{kernel,initramfs,rootfs}.location.
 type coreOSStream struct {
 	Architectures map[string]struct {
 		Artifacts map[string]struct {
 			Formats map[string]struct {
-				Disk struct {
-					Location string `json:"location"`
-				} `json:"disk"`
+				Disk      coreOSArtifact `json:"disk"`
+				Kernel    coreOSArtifact `json:"kernel"`
+				Initramfs coreOSArtifact `json:"initramfs"`
+				Rootfs    coreOSArtifact `json:"rootfs"`
 			} `json:"formats"`
 		} `json:"artifacts"`
 	} `json:"architectures"`
+}
+
+type coreOSArtifact struct {
+	Location string `json:"location"`
 }
 
 // SNOInstallationDisk is the in-VM device where bootstrap-in-place writes
@@ -212,4 +219,48 @@ func parseCoreOSLiveISO(data []byte, arch string) (string, error) {
 		return "", fmt.Errorf("stream json arch %q iso location is empty", arch)
 	}
 	return iso.Disk.Location, nil
+}
+
+// CoreOSLivePXEURLs runs `openshift-install coreos print-stream-json` and
+// returns the live kernel/initramfs/rootfs URLs for the targeted architecture.
+// Used by the macOS vfkit linux-bootloader install phase (the host has no
+// coreos-installer to embed ignition into the ISO, so we network-boot instead).
+func (i *OpenShiftInstaller) CoreOSLivePXEURLs(ctx context.Context, spec interfaces.InstallerSpec) (interfaces.CoreOSLivePXE, error) {
+	var stdout, stderr bytes.Buffer
+	if err := i.cmd.RunStreaming(ctx, &stdout, &stderr, spec.InstallerPath, "coreos", "print-stream-json"); err != nil {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("coreos print-stream-json: %w: %s", err, stderr.String())
+	}
+	arch := spec.Arch
+	if arch == "" {
+		arch = "x86_64"
+	}
+	return parseCoreOSLivePXE(stdout.Bytes(), arch)
+}
+
+func parseCoreOSLivePXE(data []byte, arch string) (interfaces.CoreOSLivePXE, error) {
+	var s coreOSStream
+	if err := json.Unmarshal(data, &s); err != nil {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("parse stream json: %w", err)
+	}
+	a, ok := s.Architectures[arch]
+	if !ok {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("stream json has no architecture %q", arch)
+	}
+	metal, ok := a.Artifacts["metal"]
+	if !ok {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("stream json arch %q has no metal artifact", arch)
+	}
+	pxe, ok := metal.Formats["pxe"]
+	if !ok {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("stream json arch %q metal has no pxe format", arch)
+	}
+	out := interfaces.CoreOSLivePXE{
+		KernelURL:    pxe.Kernel.Location,
+		InitramfsURL: pxe.Initramfs.Location,
+		RootfsURL:    pxe.Rootfs.Location,
+	}
+	if out.KernelURL == "" || out.InitramfsURL == "" || out.RootfsURL == "" {
+		return interfaces.CoreOSLivePXE{}, fmt.Errorf("stream json arch %q pxe missing kernel/initramfs/rootfs (%+v)", arch, out)
+	}
+	return out, nil
 }
