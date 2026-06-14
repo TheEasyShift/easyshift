@@ -64,6 +64,9 @@ func (m *VMManager) efiPath(name string) string   { return filepath.Join(m.vmDir
 func (m *VMManager) consolePath(name string) string {
 	return filepath.Join(m.vmDir(name), "console.log")
 }
+func (m *VMManager) launchLogPath(name string) string {
+	return filepath.Join(m.vmDir(name), "vfkit-launch.log")
+}
 
 // Create persists the launch spec, pre-allocates the disk, marks the VM for the
 // install phase, and starts it (matching libvirt's create-and-run semantics).
@@ -118,6 +121,13 @@ func (m *VMManager) launch(ctx context.Context, name string) error {
 	}
 	args := m.buildArgs(name, ls, m.phase(name))
 	cmd := exec.Command("vfkit", args...)
+	// Capture vfkit's own stdout/stderr (boot params, fatal errors) — distinct
+	// from the guest serial console (console.log) — so launch failures are
+	// diagnosable.
+	if logf, err := os.OpenFile(m.launchLogPath(name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		cmd.Stdout, cmd.Stderr = logf, logf
+		defer logf.Close()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("vfkit %s: launch: %w", name, err)
 	}
