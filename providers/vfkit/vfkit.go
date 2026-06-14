@@ -56,8 +56,9 @@ type VMManager struct {
 	sidecar  interfaces.SidecarLauncher
 
 	mu           sync.Mutex
-	sidecarStops map[string]func() // per-VM vmnet-helper stop funcs
-	watching     map[string]bool   // VMs with an active install-reboot watcher
+	sidecarStops map[string]func()      // per-VM vmnet-helper stop funcs
+	watching     map[string]bool        // VMs with an active install-reboot watcher
+	procs        map[string]*os.Process // in-process vfkit handles (this run)
 }
 
 // NewVMManager returns a vfkit-backed VMManager. stateDir is a writable dir
@@ -68,6 +69,7 @@ func NewVMManager(stateDir string, sidecar interfaces.SidecarLauncher) *VMManage
 		sidecar:      sidecar,
 		sidecarStops: map[string]func(){},
 		watching:     map[string]bool{},
+		procs:        map[string]*os.Process{},
 	}
 }
 
@@ -160,8 +162,13 @@ func (m *VMManager) launch(ctx context.Context, name string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("vfkit %s: launch: %w", name, err)
 	}
-	// Detach: we track the VM via --pidfile, not this handle.
-	_ = cmd.Process.Release()
+	// Keep the process handle so forceStop can wait for it to exit (releasing
+	// the disk-image lock before an EFI relaunch). A goroutine reaps it on
+	// natural exit so killed/rebooted VMs don't linger as zombies.
+	m.mu.Lock()
+	m.procs[name] = cmd.Process
+	m.mu.Unlock()
+	go func() { _ = cmd.Wait() }()
 
 	// Install phase: vfkit reloads the live kernel on every guest reboot (no
 	// stop-on-reboot in Virtualization.framework), so bootstrap-in-place's
@@ -236,13 +243,32 @@ func (m *VMManager) stopSidecar(name string) {
 	}
 }
 
-// forceStop kills the vfkit process promptly and tears down the sidecar (used
-// for the install->run transition, where the install VM is discarded).
+// forceStop kills the vfkit process and waits for it to actually exit (so the
+// disk-image lock is released before an EFI relaunch attaches the same disk),
+// then tears down the sidecar. Used for the install->run transition.
 func (m *VMManager) forceStop(name string) {
-	if pid, err := m.readPID(name); err == nil {
+	m.mu.Lock()
+	p := m.procs[name]
+	delete(m.procs, name)
+	m.mu.Unlock()
+
+	if p != nil {
+		_ = p.Signal(syscall.SIGKILL)
+		// Wait for the reaper goroutine to collect it; once reaped, Signal
+		// returns an error and the disk lock is gone.
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if p.Signal(syscall.Signal(0)) != nil {
+				break // process reaped → disk released
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	} else if pid, err := m.readPID(name); err == nil {
+		// No in-process handle (e.g. resumed run): kill by pid.
 		if proc, err := os.FindProcess(pid); err == nil {
 			_ = proc.Signal(syscall.SIGKILL)
 		}
+		time.Sleep(1 * time.Second)
 	}
 	m.stopSidecar(name)
 	_ = os.Remove(m.sockPath(name))
@@ -291,7 +317,13 @@ func (m *VMManager) IsRunning(_ context.Context, name string) (bool, error) {
 
 // Stop terminates the vfkit process and tears down the network sidecar.
 func (m *VMManager) Stop(_ context.Context, name string) error {
-	if pid, err := m.readPID(name); err == nil {
+	m.mu.Lock()
+	p := m.procs[name]
+	delete(m.procs, name)
+	m.mu.Unlock()
+	if p != nil {
+		_ = p.Signal(syscall.SIGTERM)
+	} else if pid, err := m.readPID(name); err == nil {
 		if proc, err := os.FindProcess(pid); err == nil {
 			_ = proc.Signal(syscall.SIGTERM)
 		}
