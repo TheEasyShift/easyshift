@@ -36,8 +36,14 @@ type VMSpec struct {
 	NetworkArg string
 	// BootISO, if non-empty, boots the VM from this ISO (a pool volume path).
 	BootISO string
-	// KernelArgs are PXE kernel args (used when BootISO is empty).
+	// KernelArgs are the kernel command line (PXE/direct-kernel boot). On macOS
+	// this is the install-phase cmdline (ignition.config.url + rootfs url + ...).
 	KernelArgs string
+	// KernelPath / InitrdPath are local paths to an uncompressed kernel and
+	// initramfs for a direct-kernel boot. Used by the macOS vfkit install phase
+	// (--bootloader linux); empty on the libvirt backend.
+	KernelPath string
+	InitrdPath string
 }
 
 // VMManager abstracts libvirt VM lifecycle plus the storage helpers needed to
@@ -117,6 +123,14 @@ type NetworkProvisioner interface {
 	// later EnsureNetwork recreates it cleanly. Idempotent: a missing or
 	// already-stopped network is treated as success.
 	ResetNetwork(ctx context.Context, name string) error
+}
+
+// SidecarLauncher starts a per-VM network sidecar and returns the unix socket
+// the VM's NIC should attach to, plus a stop function the VMManager calls when
+// the VM stops. On macOS the sidecar is a privileged vmnet-helper process;
+// there is no Linux equivalent (libvirt owns networking itself).
+type SidecarLauncher interface {
+	StartSidecar(ctx context.Context, name, socketPath string) (stop func(), err error)
 }
 
 // NetworkPreflighter is an optional capability a NetworkProvisioner may

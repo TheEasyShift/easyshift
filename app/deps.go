@@ -88,8 +88,11 @@ func NewDarwinDeps(cfg *config.Config, hostIP string) (interfaces.Deps, error) {
 	if err != nil {
 		return interfaces.Deps{}, err
 	}
-	deps.VM = vfkit.NewVMManager(cmd, filepath.Join(cfg.ConfigDir, "vfkit"))
-	deps.Net = vmnethelper.NewNetworkProvisioner(cmd)
+	// The vmnet-helper provider is both the NetworkProvisioner and the per-VM
+	// sidecar launcher the vfkit supervisor uses for guest networking.
+	net := vmnethelper.NewNetworkProvisioner(cmd)
+	deps.Net = net
+	deps.VM = vfkit.NewVMManager(filepath.Join(cfg.ConfigDir, "vfkit"), net)
 	return deps, nil
 }
 
