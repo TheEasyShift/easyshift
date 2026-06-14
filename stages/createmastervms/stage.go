@@ -5,6 +5,7 @@ package createmastervms
 import (
 	"context"
 	"fmt"
+	"runtime"
 
 	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -33,7 +34,13 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	if err := s.vm.StoragePoolActive(ctx, sc.Cluster.StoragePool); err != nil {
 		return err
 	}
-	if err := s.host.LookPath("virt-install"); err != nil {
+	// macOS boots via vfkit (no virt-install / libvirt storage pool); Linux
+	// needs virt-install on PATH.
+	bootBinary := "virt-install"
+	if runtime.GOOS == "darwin" {
+		bootBinary = "vfkit"
+	}
+	if err := s.host.LookPath(bootBinary); err != nil {
 		return err
 	}
 	hasVT, err := s.host.HasCPUVirtualization()
@@ -94,16 +101,26 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 	role := fmt.Sprintf("master-%d", index)
 	vmName := fmt.Sprintf("%s-%s", role, c.Name)
 	mac := macFor(c, role)
-	return s.vm.Create(ctx, interfaces.VMSpec{
+	spec := interfaces.VMSpec{
 		Name:        vmName,
 		MemoryMiB:   c.MasterRAM,
 		VCPUs:       c.MasterCPUs,
 		DiskSizeGiB: c.MasterDiskGB,
 		StoragePool: c.StoragePool,
 		MAC:         mac,
-		NetworkArg:  networkArgFor(c, mac),
-		BootISO:     c.BootISOVolPath,
-	})
+	}
+	if runtime.GOOS == "darwin" {
+		// vfkit install phase: direct-kernel boot of the live PXE assets with
+		// the network-ignition cmdline published by publish-pxe-assets. The
+		// network attaches via the vmnet-helper sidecar, not a --network arg.
+		spec.KernelPath = sc.RHCOSKernelPath()
+		spec.InitrdPath = sc.RHCOSInitramfsPath()
+		spec.KernelArgs = c.InstallKernelCmdline
+	} else {
+		spec.NetworkArg = networkArgFor(c, mac)
+		spec.BootISO = c.BootISOVolPath
+	}
+	return s.vm.Create(ctx, spec)
 }
 
 func macFor(c *config.ClusterConfig, role string) string {

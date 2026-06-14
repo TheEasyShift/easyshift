@@ -127,9 +127,12 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 			t.Errorf("VM[%d] name: got %q want %q", i, got, want)
 		}
 	}
-	// SNO + NAT: the master attaches to the shared NAT network.
-	if got := bundle.VM.Created[0].NetworkArg; got != "network="+config.SharedNATNetwork+",mac="+bundle.VM.Created[0].MAC+",model=virtio" {
-		t.Errorf("NAT network arg: got %q", got)
+	// SNO + NAT: the master attaches to the shared NAT network (libvirt). On
+	// macOS networking is the vmnet-helper sidecar socket, not a --network arg.
+	if runtime.GOOS != "darwin" {
+		if got := bundle.VM.Created[0].NetworkArg; got != "network="+config.SharedNATNetwork+",mac="+bundle.VM.Created[0].MAC+",model=virtio" {
+			t.Errorf("NAT network arg: got %q", got)
+		}
 	}
 	// Master boots from the default-pool ISO uploaded by embed-ignition-iso.
 	// macOS uses the PXE boot path instead (publish-pxe-assets), so the ISO
@@ -414,7 +417,11 @@ func TestCreateCluster_ResolvesStableChannel(t *testing.T) {
 // TestCreateCluster_PreflightFailsWhenMissingBinaries confirms LookPath
 // preflights surface clearly when host binaries are missing.
 func TestCreateCluster_PreflightFailsWhenMissingBinaries(t *testing.T) {
-	for _, missing := range []string{"tar", "ssh-keygen", "virt-install"} {
+	bootBinary := "virt-install"
+	if runtime.GOOS == "darwin" {
+		bootBinary = "vfkit"
+	}
+	for _, missing := range []string{"tar", "ssh-keygen", bootBinary} {
 		t.Run(missing, func(t *testing.T) {
 			cfg, deps, bundle := newTestEnv(t)
 			bundle.Host.MissingBinaries = map[string]bool{missing: true}
@@ -545,7 +552,12 @@ func TestCreateCluster_PreflightFailsOnInvalidPullSecret(t *testing.T) {
 // preflights are reported together, not one-at-a-time.
 func TestCreateCluster_PreflightAggregatesFailures(t *testing.T) {
 	cfg, deps, bundle := newTestEnv(t)
-	bundle.Host.MissingBinaries = map[string]bool{"tar": true, "ssh-keygen": true, "virt-install": true}
+	// The boot binary differs by OS: virt-install on Linux, vfkit on macOS.
+	bootBinary := "virt-install"
+	if runtime.GOOS == "darwin" {
+		bootBinary = "vfkit"
+	}
+	bundle.Host.MissingBinaries = map[string]bool{"tar": true, "ssh-keygen": true, bootBinary: true}
 	bundle.Host.NoVirtualization = true
 
 	mgr := app.NewClusterManager(cfg, deps)
@@ -554,7 +566,7 @@ func TestCreateCluster_PreflightAggregatesFailures(t *testing.T) {
 		t.Fatal("expected aggregated preflight error")
 	}
 	msg := err.Error()
-	for _, want := range []string{"tar", "ssh-keygen", "virt-install"} {
+	for _, want := range []string{"tar", "ssh-keygen", bootBinary} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("aggregated error missing %q: %v", want, err)
 		}
@@ -1091,6 +1103,9 @@ func TestCreateCluster_RejectsWorkersInPhase1(t *testing.T) {
 // does not call NetworkProvisioner and that the VM is attached via
 // bridge=<name> using the user-supplied MAC.
 func TestCreateCluster_BridgeMode_SkipsLibvirtNetwork(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("bridge mode is a Linux-only feature; deferred on macOS (vfkit uses the vmnet-helper sidecar)")
+	}
 	cfg, deps, bundle := newTestEnv(t)
 	c := newBridgeModeCluster("bridge1", "br0")
 	withDNSRecords(bundle, c)
