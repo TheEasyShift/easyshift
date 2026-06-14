@@ -353,7 +353,18 @@ func (i *Installer) CreateSingleNodeIgnition(_ context.Context, spec interfaces.
 	defer i.mu.Unlock()
 	i.CreatedSingleNodeIgn = true
 	i.record(spec)
-	return i.Err
+	if i.Err != nil {
+		return i.Err
+	}
+	// Write the SNO ignition the real installer would produce, so downstream
+	// stages (embed-ignition-iso / publish-pxe-assets) can read it.
+	if spec.ClusterDir != "" {
+		if err := os.MkdirAll(spec.ClusterDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(spec.ClusterDir, "bootstrap-in-place-for-live-iso.ign"), []byte(`{"ignition":{"version":"3.4.0"}}`), 0o600)
+	}
+	return nil
 }
 
 func (i *Installer) EmbedIgnitionInISO(_ context.Context, spec interfaces.InstallerSpec, _, _, _ string) error {
@@ -748,6 +759,16 @@ func (t *TrustStore) Uninstall(_ context.Context, caCertPath string) error {
 	return t.Err
 }
 
+// fakeHTTPRoot returns a writable temp dir so stages that publish files into
+// the fileserver root (e.g. publish-pxe-assets) work under the fakes.
+func fakeHTTPRoot() string {
+	d, err := os.MkdirTemp("", "easyshift-fake-http-")
+	if err != nil {
+		return os.TempDir()
+	}
+	return d
+}
+
 // All returns a Deps wired with one fresh fake per interface, ready for tests
 // that want a vanilla happy-path environment.
 func All() (interfaces.Deps, *Bundle) {
@@ -757,7 +778,7 @@ func All() (interfaces.Deps, *Bundle) {
 		VM:              &VMManager{},
 		Net:             &NetworkProvisioner{},
 		Installer:       &Installer{},
-		Files:           &FileServer{Root: "/fake-http-root", URL: "http://fake:9393"},
+		Files:           &FileServer{Root: fakeHTTPRoot(), URL: "http://fake:9393"},
 		CSR:             &CSRApprover{},
 		Hostname:        &HostnameInjector{},
 		Host:            &HostInspector{},

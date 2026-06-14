@@ -178,6 +178,10 @@ type ClusterConfig struct {
 	// bootstrap-in-place ISO, set by the embed-ignition-iso stage and used
 	// by create-master-vms. Persisted so a resumed build reuses it.
 	BootISOVolPath string `json:"bootISOVolPath,omitempty"`
+	// InstallKernelCmdline is the macOS install-phase kernel command line
+	// (ignition.config.url + rootfs url + …) computed by publish-pxe-assets and
+	// used by create-master-vms for the vfkit linux bootloader. macOS only.
+	InstallKernelCmdline string `json:"installKernelCmdline,omitempty"`
 	// KubeconfigTarget is the user kubeconfig file the merge-kubeconfig stage
 	// wrote the cluster's context into (resolved from $KUBECONFIG at create
 	// time), so delete cleans the same file even if the env changed since.
