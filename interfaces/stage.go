@@ -59,6 +59,27 @@ func (sc *StageContext) RHCOSLiveISOPath() string {
 	return filepath.Join(config.RHCOSCacheDir(sc.Config.ConfigDir, sc.Cluster.OCPVersion), "rhcos-live.iso")
 }
 
+// rhcosCache is the per-OCP-version RHCOS asset cache (shared across clusters).
+func (sc *StageContext) rhcosCache() string {
+	return config.RHCOSCacheDir(sc.Config.ConfigDir, sc.Cluster.OCPVersion)
+}
+
+// RHCOSKernelPath is the cached, uncompressed RHCOS live kernel (macOS vfkit
+// linux-bootloader install phase; arm64 requires an uncompressed kernel).
+func (sc *StageContext) RHCOSKernelPath() string {
+	return filepath.Join(sc.rhcosCache(), "vmlinuz")
+}
+
+// RHCOSInitramfsPath is the cached RHCOS live initramfs.
+func (sc *StageContext) RHCOSInitramfsPath() string {
+	return filepath.Join(sc.rhcosCache(), "initramfs.img")
+}
+
+// RHCOSRootfsPath is the cached RHCOS live rootfs (served over HTTP at boot).
+func (sc *StageContext) RHCOSRootfsPath() string {
+	return filepath.Join(sc.rhcosCache(), "rootfs.img")
+}
+
 // MasterISOVolName is the storage-pool volume name for the master ISO.
 func (sc *StageContext) MasterISOVolName() string {
 	return "easyshift-" + sc.Cluster.Name + "-master.iso"

@@ -159,9 +159,15 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 	if !bundle.Installer.WaitedForInstall {
 		t.Error("expected Installer.WaitForInstallComplete to be called")
 	}
-	// 3 binaries + 1 RHCOS ISO = 4 downloads on first cluster.
-	if got, want := len(bundle.Download.Calls), 4; got != want {
-		t.Errorf("download calls: got %d want %d", got, want)
+	// Linux: 3 binaries (openshift-install, oc, coreos-installer) + 1 RHCOS ISO.
+	// macOS: 2 binaries (no coreos-installer) + 3 PXE assets (kernel, initramfs,
+	// rootfs) = 5 downloads on first cluster.
+	wantDownloads := 4
+	if runtime.GOOS == "darwin" {
+		wantDownloads = 5
+	}
+	if got := len(bundle.Download.Calls); got != wantDownloads {
+		t.Errorf("download calls: got %d want %d", got, wantDownloads)
 	}
 	// CSR approver goroutine was launched during wait-for-install.
 	if !bundle.CSR.WasStarted() {

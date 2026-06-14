@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -113,16 +114,21 @@ func (d *Downloader) Download(_ context.Context, url, destPath string) error {
 	if d.Err != nil {
 		return d.Err
 	}
+	// Simulate the download side effect so stages that read the file back work
+	// (e.g. download-rhcos gunzipping the kernel). release.txt gets canned
+	// channel content; everything else a small placeholder.
+	body := []byte("FAKE DOWNLOAD")
 	if strings.HasSuffix(url, "/release.txt") {
-		body := "Name:      4.99.0\nDigest:    sha256:fake\nCreated:   2026-01-01T00:00:00Z\n"
+		s := "Name:      4.99.0\nDigest:    sha256:fake\nCreated:   2026-01-01T00:00:00Z\n"
 		if d.ReleaseTxtBody != "" {
-			body = d.ReleaseTxtBody
+			s = d.ReleaseTxtBody
 		}
-		if err := os.WriteFile(destPath, []byte(body), 0o600); err != nil {
-			return err
-		}
+		body = []byte(s)
 	}
-	return nil
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(destPath, body, 0o600)
 }
 
 // VMManager is a fake interfaces.VMManager. Created VMs are tracked in Created
@@ -394,6 +400,21 @@ func (i *Installer) CoreOSLiveISOURL(_ context.Context, spec interfaces.Installe
 		return i.LiveISOURL, nil
 	}
 	return "https://rhcos.example.com/rhcos-live.x86_64.iso", nil
+}
+
+// CoreOSLivePXEURLs returns canned PXE asset URLs.
+func (i *Installer) CoreOSLivePXEURLs(_ context.Context, spec interfaces.InstallerSpec) (interfaces.CoreOSLivePXE, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.record(spec)
+	if i.Err != nil {
+		return interfaces.CoreOSLivePXE{}, i.Err
+	}
+	return interfaces.CoreOSLivePXE{
+		KernelURL:    "https://rhcos.example.com/live-kernel.aarch64",
+		InitramfsURL: "https://rhcos.example.com/live-initramfs.aarch64.img",
+		RootfsURL:    "https://rhcos.example.com/live-rootfs.aarch64.img",
+	}, nil
 }
 
 // FileServer is a fake interfaces.FileServer.

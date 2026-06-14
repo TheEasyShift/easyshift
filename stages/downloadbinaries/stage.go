@@ -50,13 +50,18 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 			return fmt.Errorf("download oc: %w", err)
 		}
 	}
-	coreosPath := filepath.Join(binDir, "coreos-installer")
-	if _, err := os.Stat(coreosPath); err != nil {
-		if err := s.dl.Download(ctx, openshift.CoreOSInstallerURL, coreosPath); err != nil {
-			return fmt.Errorf("download coreos-installer: %w", err)
-		}
-		if _, err := s.cmd.Run(ctx, "chmod", "+x", coreosPath); err != nil {
-			return fmt.Errorf("chmod coreos-installer: %w", err)
+	// coreos-installer is a Linux-only binary used to embed ignition into the
+	// live ISO. macOS has no build and uses network ignition (PXE boot)
+	// instead, so skip it there.
+	if runtime.GOOS != "darwin" {
+		coreosPath := filepath.Join(binDir, "coreos-installer")
+		if _, err := os.Stat(coreosPath); err != nil {
+			if err := s.dl.Download(ctx, openshift.CoreOSInstallerURL, coreosPath); err != nil {
+				return fmt.Errorf("download coreos-installer: %w", err)
+			}
+			if _, err := s.cmd.Run(ctx, "chmod", "+x", coreosPath); err != nil {
+				return fmt.Errorf("chmod coreos-installer: %w", err)
+			}
 		}
 	}
 	return nil
