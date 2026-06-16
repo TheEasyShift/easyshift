@@ -61,6 +61,13 @@ func SidecarArgv(socketPath, subnet string) []string {
 		"--start-address", subnet + ".1",
 		"--end-address", subnet + ".254",
 		"--subnet-mask", "255.255.255.0",
+		// NOTE: vmnet-helper's --enable-tso / --enable-checksum-offload are NOT
+		// usable with vfkit. They require a virtio-net header on the socket
+		// frames to carry segmentation/checksum metadata (how QEMU uses them),
+		// but Apple's VZ file-handle network attachment exchanges raw Ethernet
+		// frames with no such header. Enabling them corrupts all payload traffic
+		// (ARP still resolves, but ICMP/TCP get 100% loss). Verified 2026-06-15.
+		// See the vfkit-boot-spike doc for the real lever (vmnet-broker, macOS 26+).
 	}
 }
 
