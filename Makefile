@@ -4,6 +4,7 @@ TARGET := easyshift
 
 CHECKMAKE := go run github.com/checkmake/checkmake/cmd/checkmake@v0.3.2
 GOLANGCI_LINT := go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1
+ACTIONLINT := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 
 .DEFAULT_GOAL := build
@@ -11,7 +12,7 @@ GOLANGCI_LINT := go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.5
 
 .PHONY: check
 
-check: lint build test
+check: lint.light build test
 
 .PHONY: lint.go.vet
 lint.go.vet:
@@ -38,6 +39,9 @@ fix.go.fmt: # fix go formatting (if needed)
 .PHONY: lint.go.light
 lint.go.light: lint.go.vet lint.go.fmt
 
+
+
+
 .PHONY: test
 test:  lint.go.light ## run unit tests
 	@go test -count=1 ./...
@@ -58,9 +62,21 @@ lint.go.full:  lint.go.light lint.go.golangci
 lint.make:
 	@$(CHECKMAKE) $(MK_SOURCE)
 
+.PHONY: lint.light
+
+lint.light: lint.make lint.workflows lint.go.light
+
+
 .PHONY: lint
 
-lint: lint.make lint.go.light
+lint: lint.make lint.workflows lint.go.full
+
+.PHONY: lint.workflows
+
+lint.workflows: ## lint the GitHub workflow files
+	@echo "linting GitHub workflows..."
+	@$(ACTIONLINT) -color
+	@echo "workflows are good."
 
 
 
