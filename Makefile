@@ -60,7 +60,9 @@ lint.go.full:  lint.go.light lint.go.golangci
 .PHONY: lint.make
 
 lint.make:
+	@echo "linting the Makefile..."
 	@$(CHECKMAKE) $(MK_SOURCE)
+	@echo "the Makefile is OK."
 
 .PHONY: lint.light
 
