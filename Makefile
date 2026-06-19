@@ -68,11 +68,6 @@ lint.make:
 	@$(CHECKMAKE) $(MK_SOURCE)
 	@echo "the Makefile is OK."
 
-.PHONY: lint.light
-
-lint.light: lint.make lint.workflows lint.go.light
-
-
 .PHONY: lint
 
 lint: lint.make lint.workflows lint.go
