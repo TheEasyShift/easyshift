@@ -35,3 +35,4 @@ go.work.sum
 cloudflare-token
 pull-secret
 pull-secret*.txt
+.gstack/

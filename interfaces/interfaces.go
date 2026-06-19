@@ -44,6 +44,17 @@ type VMSpec struct {
 	// (--bootloader linux); empty on the libvirt backend.
 	KernelPath string
 	InitrdPath string
+	// ExtraDisks are additional disks attached after the primary OS disk, in
+	// order. Used to attach the read-only baked image-store disk.
+	ExtraDisks []ExtraDisk
+}
+
+// ExtraDisk is a secondary disk attached to a VM by path (a libvirt pool
+// volume path). ReadOnly + Shareable suit a store cloned to several VMs.
+type ExtraDisk struct {
+	Path      string
+	ReadOnly  bool
+	Shareable bool
 }
 
 // VMManager abstracts libvirt VM lifecycle plus the storage helpers needed to
@@ -59,6 +70,10 @@ type VMManager interface {
 	// ImportISO uploads localPath into the named storage pool as volName and
 	// returns the pool volume path for use as VMSpec.BootISO.
 	ImportISO(ctx context.Context, pool, volName, localPath string) (string, error)
+	// ImportDisk uploads a qcow2 image at localPath into the named storage pool
+	// as volName (format qcow2) and returns the pool volume path for use as an
+	// ExtraDisk. Used for the baked image-store disk.
+	ImportDisk(ctx context.Context, pool, volName, localPath string) (string, error)
 	// RemoveISO deletes a volume previously created by ImportISO.
 	RemoveISO(ctx context.Context, pool, volName string) error
 	// CheckAccess probes that the libvirt endpoint is reachable (libvirtd up,
@@ -173,12 +188,21 @@ type InstallerSpec struct {
 type Installer interface {
 	WriteInstallConfig(ctx context.Context, spec InstallerSpec) error
 	CreateIgnitionConfigs(ctx context.Context, spec InstallerSpec) error
+	// WriteImageStoreManifest drops a MachineConfig into the install dir's
+	// openshift/ so the next ignition render wires CRI-O to the baked image
+	// store (mounted read-only on the installed node). Must run before
+	// CreateSingleNodeIgnition, which loads any manifests already on disk.
+	WriteImageStoreManifest(ctx context.Context, spec InstallerSpec) error
 	CreateSingleNodeIgnition(ctx context.Context, spec InstallerSpec) error
 	// WriteRosettaManifest drops a MachineConfig into the install dir that
 	// mounts the vfkit rosetta virtiofs share and registers the x86-64
 	// binfmt_misc handler, so the installed node runs amd64 binaries via
 	// Apple Rosetta. Called on macOS hosts before CreateSingleNodeIgnition.
 	WriteRosettaManifest(ctx context.Context, spec InstallerSpec) error
+	// MergeImageStoreIntoLiveISOIgnition rewrites the live-ISO ignition at
+	// ignitionPath to mount the baked store and register it with CRI-O, so the
+	// bootstrap (live-ISO) phase also serves images locally. Operates in place.
+	MergeImageStoreIntoLiveISOIgnition(ctx context.Context, spec InstallerSpec, ignitionPath string) error
 	EmbedIgnitionInISO(ctx context.Context, spec InstallerSpec, isoPath, ignitionPath, outputPath string) error
 	// EmbedNetworkKeyfileInISO embeds a NetworkManager keyfile into the live
 	// ISO (coreos-installer iso network embed) so the node applies static
@@ -201,6 +225,34 @@ type CoreOSLivePXE struct {
 	KernelURL    string
 	InitramfsURL string
 	RootfsURL    string
+}
+
+// BakeSpec carries everything ImageBaker.Bake needs for one OCP version. The
+// store is multi-arch: the baker enumerates every supported release arch, so a
+// single store serves amd64 and aarch64 (Rosetta) nodes alike.
+type BakeSpec struct {
+	// Version is the resolved OCP version (e.g. "4.21.0").
+	Version string
+	// OCBinaryPath is the `oc` for this version (used for `oc adm release info`).
+	OCBinaryPath string
+	// PullSecretPath is the on-disk registry auth file passed to oc + skopeo.
+	PullSecretPath string
+	// OverlayDir is the CRI-O graphroot skopeo copies images into.
+	OverlayDir string
+	// OutputQcowPath is the packed, labeled qcow2 to produce from OverlayDir.
+	OutputQcowPath string
+}
+
+// ImageBaker pre-pulls the OCP release payload into a read-only disk image so
+// installs serve platform images locally instead of pulling from quay.io.
+type ImageBaker interface {
+	// Ready reports whether the packed store for this spec already exists, so
+	// the bake stage can skip the (expensive) rebuild on resume.
+	Ready(spec BakeSpec) (bool, error)
+	// Bake enumerates the release payload for every supported arch, copies each
+	// image into the overlay store, and packs it into OutputQcowPath. Must
+	// tolerate retry after a partial run.
+	Bake(ctx context.Context, spec BakeSpec) error
 }
 
 // FileServer abstracts the HTTP server that hosts ignition + RHCOS files.

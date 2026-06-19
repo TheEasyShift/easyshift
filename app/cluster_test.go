@@ -92,6 +92,67 @@ func newTestEnv(t *testing.T) (*config.Config, interfaces.Deps, *fakes.Bundle) {
 	return cfg, deps, bundle
 }
 
+// TestCreateCluster_BakeImages exercises the --bake-images path end-to-end
+// with fakes: the bake stage builds the store, the ignition gets the
+// MachineConfig + live-ISO merge, and the master gets a read-only store disk.
+func TestCreateCluster_BakeImages(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	c := newTestCluster("baked")
+	c.BakeImages = true
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if got := len(bundle.ImageBaker.Baked); got != 1 {
+		t.Fatalf("ImageBaker.Bake calls: got %d want 1", got)
+	}
+	if !bundle.Installer.WroteImageStoreManifest {
+		t.Error("expected WriteImageStoreManifest to be called")
+	}
+	// Merging the image store into the *live ISO* ignition is part of the
+	// Linux boot-media path; macOS serves ignition over HTTP (publish-pxe-assets),
+	// where the equivalent merge is wired in the on-hardware phase.
+	if runtime.GOOS != "darwin" && !bundle.Installer.MergedImageStoreIgnition {
+		t.Error("expected MergeImageStoreIntoLiveISOIgnition to be called")
+	}
+	if got := len(bundle.VM.ImportedDisks); got != 1 {
+		t.Fatalf("ImportDisk calls: got %d want 1", got)
+	}
+	// The master VM must carry exactly one read-only, shareable extra disk.
+	if len(bundle.VM.Created) != 1 {
+		t.Fatalf("VMs created: got %d want 1", len(bundle.VM.Created))
+	}
+	disks := bundle.VM.Created[0].ExtraDisks
+	if len(disks) != 1 {
+		t.Fatalf("master extra disks: got %d want 1", len(disks))
+	}
+	if !disks[0].ReadOnly || !disks[0].Shareable {
+		t.Errorf("store disk must be read-only + shareable, got %+v", disks[0])
+	}
+}
+
+// TestCreateCluster_NoBakeByDefault confirms baking is opt-in: a default
+// cluster touches none of the bake machinery.
+func TestCreateCluster_NoBakeByDefault(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	if err := mgr.Create(context.Background(), newTestCluster("plain")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(bundle.ImageBaker.Baked); got != 0 {
+		t.Errorf("expected no bakes, got %d", got)
+	}
+	if bundle.Installer.WroteImageStoreManifest || bundle.Installer.MergedImageStoreIgnition {
+		t.Error("bake-store installer methods should not be called without --bake-images")
+	}
+	if len(bundle.VM.Created) == 1 && len(bundle.VM.Created[0].ExtraDisks) != 0 {
+		t.Errorf("master should have no extra disks without --bake-images")
+	}
+}
+
 // TestCreateCluster_HappyPath walks the full stage list with all-fake deps
 // and asserts each interface saw the expected call.
 func TestCreateCluster_HappyPath(t *testing.T) {
@@ -185,6 +246,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		"ensure-cluster-dir",
 		"download-binaries",
 		"download-rhcos",
+		"bake-image-store",
 		"generate-ssh-key",
 		"generate-ignition",
 		bootMediaStageName(),

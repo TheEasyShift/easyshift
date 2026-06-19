@@ -31,6 +31,34 @@ func RHCOSCacheDir(configDir, version string) string {
 	return filepath.Join(configDir, "rhcos", version)
 }
 
+// ImageStoreCacheDir is the per-version cache root for the baked image store.
+// It holds the CRI-O overlay container store (built once with skopeo) and the
+// packed qcow2 produced from it. Shared across clusters of the same version.
+func ImageStoreCacheDir(configDir, version string) string {
+	return filepath.Join(configDir, "imagestore", version)
+}
+
+// ImageStoreOverlayDir is the CRI-O container storage graphroot that skopeo
+// copies release images into, inside the per-version cache.
+func ImageStoreOverlayDir(configDir, version string) string {
+	return filepath.Join(ImageStoreCacheDir(configDir, version), "store")
+}
+
+// ImageStoreQcowPath is the packed read-only qcow2 (an ext4 filesystem labeled
+// BakedImagesLabel containing the overlay store) for the given version. Built
+// once on the host; a per-cluster copy is uploaded into the libvirt pool and
+// attached to the master.
+func ImageStoreQcowPath(configDir, version string) string {
+	return filepath.Join(ImageStoreCacheDir(configDir, version), "store.qcow2")
+}
+
+// ImageStoreVolName is the per-cluster libvirt pool volume name for the
+// attached baked-image-store disk. Per-cluster (not shared) so cluster delete
+// — which removes all of a domain's storage — never strands another cluster.
+func ImageStoreVolName(name string) string {
+	return "easyshift-" + name + "-imagestore.qcow2"
+}
+
 // ClusterDNSNames returns the DNS names a bridge-mode cluster needs, all of
 // which must resolve to the master IP. The wildcard *.apps is probed via a
 // synthetic console hostname because a literal "*" lookup isn't valid DNS.

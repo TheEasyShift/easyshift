@@ -24,5 +24,6 @@ A good reading order: **installation → configuration → usage**, then
 | [architecture.md](dev/architecture.md) | Package layering and the staged-installer model |
 | [stages.md](dev/stages.md) | The stage contract; adding or changing a stage |
 | [providers.md](dev/providers.md) | Interfaces, provider implementations, and fakes |
+| [image-baking.md](dev/image-baking.md) | `--bake-images`: pre-pulling the release payload into a read-only store |
 | [testing.md](dev/testing.md) | Make targets, fakes, and `--simulate` |
 | [contributing.md](dev/contributing.md) | Workflow, commit conventions, PR flow |

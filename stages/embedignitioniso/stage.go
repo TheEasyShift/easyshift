@@ -34,6 +34,14 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	srcISO := sc.RHCOSLiveISOPath()
 	ignition := filepath.Join(sc.ClusterDir(), "bootstrap-in-place-for-live-iso.ign")
 	local := sc.MasterISOPath()
+	// When baking, also wire the live-ISO (bootstrap) phase to the read-only
+	// store so the temporary control plane serves images locally too. Done on
+	// the generated ignition before it is embedded into the ISO.
+	if sc.Cluster.BakeImages {
+		if err := s.installer.MergeImageStoreIntoLiveISOIgnition(ctx, sc.InstallerSpec(), ignition); err != nil {
+			return err
+		}
+	}
 	if err := s.installer.EmbedIgnitionInISO(ctx, sc.InstallerSpec(), srcISO, ignition, local); err != nil {
 		return err
 	}

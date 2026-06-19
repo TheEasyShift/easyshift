@@ -71,6 +71,16 @@ func (m *LibvirtVMManager) Create(ctx context.Context, spec interfaces.VMSpec) e
 		"--boot", "hd,cdrom",
 		"--noautoconsole",
 	}
+	for _, d := range spec.ExtraDisks {
+		disk := fmt.Sprintf("path=%s,bus=virtio", d.Path)
+		if d.ReadOnly {
+			disk += ",readonly=on"
+		}
+		if d.Shareable {
+			disk += ",shareable=on"
+		}
+		args = append(args, "--disk", disk)
+	}
 	if spec.BootISO != "" {
 		args = append(args, "--cdrom", spec.BootISO)
 	} else {
@@ -164,6 +174,31 @@ func (m *LibvirtVMManager) ImportISO(ctx context.Context, pool, volName, localPa
 
 	if _, err := m.virsh(ctx, "vol-create-as", pool, volName,
 		strconv.FormatInt(fi.Size(), 10), "--format", "raw"); err != nil {
+		return "", fmt.Errorf("vol-create-as %s: %w", volName, err)
+	}
+	if _, err := m.virsh(ctx, "vol-upload", "--pool", pool, volName, localPath); err != nil {
+		return "", fmt.Errorf("vol-upload %s: %w", volName, err)
+	}
+	out, err := m.virsh(ctx, "vol-path", "--pool", pool, volName)
+	if err != nil {
+		return "", fmt.Errorf("vol-path %s: %w", volName, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ImportDisk uploads a qcow2 image into the named storage pool as volName
+// (preserving the qcow2 format so its virtual size, not file size, governs the
+// volume) and returns the resulting pool volume path. Idempotent: a stale
+// volume from a prior attempt is dropped first. Used for the baked image store.
+func (m *LibvirtVMManager) ImportDisk(ctx context.Context, pool, volName, localPath string) (string, error) {
+	fi, err := os.Stat(localPath)
+	if err != nil {
+		return "", fmt.Errorf("stat disk %s: %w", localPath, err)
+	}
+	_, _ = m.virsh(ctx, "vol-delete", "--pool", pool, volName)
+
+	if _, err := m.virsh(ctx, "vol-create-as", pool, volName,
+		strconv.FormatInt(fi.Size(), 10), "--format", "qcow2"); err != nil {
 		return "", fmt.Errorf("vol-create-as %s: %w", volName, err)
 	}
 	if _, err := m.virsh(ctx, "vol-upload", "--pool", pool, volName, localPath); err != nil {
