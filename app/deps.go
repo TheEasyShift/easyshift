@@ -52,6 +52,7 @@ func baseDeps(cfg *config.Config, hostIP string) (interfaces.Deps, interfaces.Co
 		Cmd:        cmd,
 		Download:   dl,
 		Installer:  openshift.NewOpenShiftInstaller(cmd),
+		ImageBaker: openshift.NewOpenShiftImageBaker(cmd),
 		Files:      files,
 		CSR:        csr.NewOCCSRApprover(cmd),
 		Hostname:   host.NewSSHHostnameInjector(cmd),

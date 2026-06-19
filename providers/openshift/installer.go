@@ -145,6 +145,40 @@ func (i *OpenShiftInstaller) WriteRosettaManifest(_ context.Context, spec interf
 	return nil
 }
 
+// WriteImageStoreManifest drops the baked-store MachineConfig into the install
+// dir's openshift/ directory. `create single-node-ignition-config` loads any
+// manifests already present there, so the storage.conf drop-in + read-only
+// mount unit are rendered into the installed node's ignition (present from
+// first boot, before CRI-O pulls the operator payload).
+func (i *OpenShiftInstaller) WriteImageStoreManifest(_ context.Context, spec interfaces.InstallerSpec) error {
+	dir := filepath.Join(spec.ClusterDir, "openshift")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create openshift manifests dir: %w", err)
+	}
+	path := filepath.Join(dir, MachineConfigName+".yaml")
+	if err := os.WriteFile(path, []byte(RenderMachineConfig()), 0o644); err != nil {
+		return fmt.Errorf("write image-store MachineConfig: %w", err)
+	}
+	return nil
+}
+
+// MergeImageStoreIntoLiveISOIgnition rewrites the live-ISO ignition in place so
+// the bootstrap phase mounts the baked store and registers it with CRI-O.
+func (i *OpenShiftInstaller) MergeImageStoreIntoLiveISOIgnition(_ context.Context, _ interfaces.InstallerSpec, ignitionPath string) error {
+	data, err := os.ReadFile(ignitionPath)
+	if err != nil {
+		return fmt.Errorf("read live-iso ignition: %w", err)
+	}
+	merged, err := MergeBakedStoreIntoIgnition(data)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(ignitionPath, merged, 0o600); err != nil {
+		return fmt.Errorf("write merged live-iso ignition: %w", err)
+	}
+	return nil
+}
+
 // CreateSingleNodeIgnition runs `openshift-install create single-node-ignition-config`.
 func (i *OpenShiftInstaller) CreateSingleNodeIgnition(ctx context.Context, spec interfaces.InstallerSpec) error {
 	if _, err := i.cmd.Run(ctx, spec.InstallerPath, "create", "single-node-ignition-config", "--dir", spec.ClusterDir); err != nil {

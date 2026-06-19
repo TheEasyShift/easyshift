@@ -17,8 +17,8 @@ func TestNewDarwinDeps_WiresMacProviders(t *testing.T) {
 	if deps.VM == nil || deps.Net == nil {
 		t.Fatal("darwin deps must wire VM and Net")
 	}
-	if deps.Installer == nil || deps.Files == nil {
-		t.Fatal("darwin deps must wire the shared deps (installer, files)")
+	if deps.Installer == nil || deps.ImageBaker == nil || deps.Files == nil {
+		t.Fatal("darwin deps must wire the shared deps (installer, image baker, files)")
 	}
 	// The vfkit VMManager treats ImportISO as a no-op (libvirt would shell out).
 	if _, err := deps.VM.ImportISO(context.Background(), "p", "v", "/tmp/x"); err != nil {

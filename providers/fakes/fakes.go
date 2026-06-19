@@ -134,15 +134,16 @@ func (d *Downloader) Download(_ context.Context, url, destPath string) error {
 // VMManager is a fake interfaces.VMManager. Created VMs are tracked in Created
 // and considered running until Stop/Delete is called.
 type VMManager struct {
-	mu           sync.Mutex
-	Created      []interfaces.VMSpec
-	Started      []string
-	Stopped      []string
-	Deleted      []string
-	ImportedISOs []string // volNames passed to ImportISO
-	RemovedISOs  []string // volNames passed to RemoveISO
-	running      map[string]bool
-	Err          error
+	mu            sync.Mutex
+	Created       []interfaces.VMSpec
+	Started       []string
+	Stopped       []string
+	Deleted       []string
+	ImportedISOs  []string // volNames passed to ImportISO
+	ImportedDisks []string // volNames passed to ImportDisk
+	RemovedISOs   []string // volNames passed to RemoveISO
+	running       map[string]bool
+	Err           error
 	// CheckAccessErr, if set, is returned by CheckAccess (simulates libvirt
 	// being unreachable).
 	CheckAccessErr error
@@ -216,6 +217,17 @@ func (v *VMManager) ImportISO(_ context.Context, _, volName, _ string) (string, 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.ImportedISOs = append(v.ImportedISOs, volName)
+	if v.Err != nil {
+		return "", v.Err
+	}
+	return "/var/lib/libvirt/images/" + volName, nil
+}
+
+// ImportDisk records volName and returns a deterministic fake pool path.
+func (v *VMManager) ImportDisk(_ context.Context, _, volName, _ string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.ImportedDisks = append(v.ImportedDisks, volName)
 	if v.Err != nil {
 		return "", v.Err
 	}
@@ -307,13 +319,15 @@ func (n *NetworkProvisioner) ResetNetwork(_ context.Context, network string) err
 // the most recent method call so tests can assert on the resolved binary
 // paths the stages produced.
 type Installer struct {
-	mu                   sync.Mutex
-	WroteInstallConfig   bool
-	CreatedIgnitions     bool
-	CreatedSingleNodeIgn bool
-	WroteRosettaManifest bool
-	EmbeddedISO          bool
-	EmbeddedNetwork      bool
+	mu                       sync.Mutex
+	WroteInstallConfig       bool
+	CreatedIgnitions         bool
+	CreatedSingleNodeIgn     bool
+	WroteRosettaManifest     bool
+	WroteImageStoreManifest  bool
+	MergedImageStoreIgnition bool
+	EmbeddedISO              bool
+	EmbeddedNetwork          bool
 	// LastNetworkKeyfile is the keyfile path passed to the most recent
 	// EmbedNetworkKeyfileInISO call (empty if never called).
 	LastNetworkKeyfile  string
@@ -357,6 +371,14 @@ func (i *Installer) WriteRosettaManifest(_ context.Context, spec interfaces.Inst
 	return i.Err
 }
 
+func (i *Installer) WriteImageStoreManifest(_ context.Context, spec interfaces.InstallerSpec) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.WroteImageStoreManifest = true
+	i.record(spec)
+	return i.Err
+}
+
 func (i *Installer) CreateSingleNodeIgnition(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -374,6 +396,14 @@ func (i *Installer) CreateSingleNodeIgnition(_ context.Context, spec interfaces.
 		return os.WriteFile(filepath.Join(spec.ClusterDir, "bootstrap-in-place-for-live-iso.ign"), []byte(`{"ignition":{"version":"3.4.0"}}`), 0o600)
 	}
 	return nil
+}
+
+func (i *Installer) MergeImageStoreIntoLiveISOIgnition(_ context.Context, spec interfaces.InstallerSpec, _ string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.MergedImageStoreIgnition = true
+	i.record(spec)
+	return i.Err
 }
 
 func (i *Installer) EmbedIgnitionInISO(_ context.Context, spec interfaces.InstallerSpec, _, _, _ string) error {
@@ -435,6 +465,42 @@ func (i *Installer) CoreOSLivePXEURLs(_ context.Context, spec interfaces.Install
 		InitramfsURL: "https://rhcos.example.com/live-initramfs.aarch64.img",
 		RootfsURL:    "https://rhcos.example.com/live-rootfs.aarch64.img",
 	}, nil
+}
+
+// ImageBaker is a fake interfaces.ImageBaker. It records bake specs and
+// reports the store as not-ready until a Bake has run (so the stage exercises
+// the build path), unless ReadyResult is forced.
+type ImageBaker struct {
+	mu          sync.Mutex
+	Baked       []interfaces.BakeSpec
+	ReadyForced *bool // when non-nil, Ready returns this regardless of Baked
+	Err         error
+}
+
+// Ready returns ReadyForced when set, else whether a Bake has been recorded.
+func (b *ImageBaker) Ready(spec interfaces.BakeSpec) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.ReadyForced != nil {
+		return *b.ReadyForced, b.Err
+	}
+	for _, s := range b.Baked {
+		if s.OutputQcowPath == spec.OutputQcowPath {
+			return true, b.Err
+		}
+	}
+	return false, b.Err
+}
+
+// Bake records the spec.
+func (b *ImageBaker) Bake(_ context.Context, spec interfaces.BakeSpec) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.Err != nil {
+		return b.Err
+	}
+	b.Baked = append(b.Baked, spec)
+	return nil
 }
 
 // FileServer is a fake interfaces.FileServer.
@@ -787,6 +853,7 @@ func All() (interfaces.Deps, *Bundle) {
 		VM:              &VMManager{},
 		Net:             &NetworkProvisioner{},
 		Installer:       &Installer{},
+		ImageBaker:      &ImageBaker{},
 		Files:           &FileServer{Root: fakeHTTPRoot(), URL: "http://fake:9393"},
 		CSR:             &CSRApprover{},
 		Hostname:        &HostnameInjector{},
@@ -804,6 +871,7 @@ func All() (interfaces.Deps, *Bundle) {
 		VM:         b.VM,
 		Net:        b.Net,
 		Installer:  b.Installer,
+		ImageBaker: b.ImageBaker,
 		Files:      b.Files,
 		CSR:        b.CSR,
 		Hostname:   b.Hostname,
@@ -834,6 +902,9 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		for _, v := range b.VM.Created {
 			fmt.Fprintf(w, "  %s  ram=%dMiB  vcpus=%d  disk=%dGiB  net=%q  boot-iso=%q\n",
 				v.Name, v.MemoryMiB, v.VCPUs, v.DiskSizeGiB, v.NetworkArg, v.BootISO)
+			for _, d := range v.ExtraDisks {
+				fmt.Fprintf(w, "      + extra-disk %s  readonly=%t shareable=%t\n", d.Path, d.ReadOnly, d.Shareable)
+			}
 		}
 	}
 	if len(b.VM.Started) > 0 {
@@ -847,6 +918,15 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 	}
 	if len(b.VM.ImportedISOs) > 0 {
 		fmt.Fprintf(w, "\nISOs imported to libvirt pool: %v\n", b.VM.ImportedISOs)
+	}
+	if len(b.VM.ImportedDisks) > 0 {
+		fmt.Fprintf(w, "\nDisks imported to libvirt pool: %v\n", b.VM.ImportedDisks)
+	}
+	if len(b.ImageBaker.Baked) > 0 {
+		fmt.Fprintf(w, "\nImage stores baked (%d):\n", len(b.ImageBaker.Baked))
+		for _, s := range b.ImageBaker.Baked {
+			fmt.Fprintf(w, "  version=%s  -> %s\n", s.Version, s.OutputQcowPath)
+		}
 	}
 
 	if len(b.Net.Ensured) > 0 {
@@ -909,8 +989,14 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		if b.Installer.WroteRosettaManifest {
 			fmt.Fprintln(w, "  - WriteRosettaManifest (macOS amd64-via-Rosetta)")
 		}
+		if b.Installer.WroteImageStoreManifest {
+			fmt.Fprintln(w, "  - WriteImageStoreManifest (baked image store)")
+		}
 		if b.Installer.CreatedSingleNodeIgn {
 			fmt.Fprintln(w, "  - CreateSingleNodeIgnition")
+		}
+		if b.Installer.MergedImageStoreIgnition {
+			fmt.Fprintln(w, "  - MergeImageStoreIntoLiveISOIgnition (baked image store)")
 		}
 		if b.Installer.EmbeddedISO {
 			fmt.Fprintln(w, "  - EmbedIgnitionInISO")
@@ -956,6 +1042,7 @@ type Bundle struct {
 	VM              *VMManager
 	Net             *NetworkProvisioner
 	Installer       *Installer
+	ImageBaker      *ImageBaker
 	Files           *FileServer
 	CSR             *CSRApprover
 	Hostname        *HostnameInjector

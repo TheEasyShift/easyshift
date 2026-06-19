@@ -75,6 +75,14 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 			return err
 		}
 	}
+	// Drop the baked-store MachineConfig before rendering ignition, so the
+	// installed node mounts the store and CRI-O reads it from first boot. The
+	// manifest must exist before CreateSingleNodeIgnition, which loads it.
+	if sc.Cluster.BakeImages {
+		if err := s.installer.WriteImageStoreManifest(ctx, spec); err != nil {
+			return err
+		}
+	}
 	return s.installer.CreateSingleNodeIgnition(ctx, spec)
 }
 
@@ -86,6 +94,7 @@ func (*Stage) Rollback(_ context.Context, sc *interfaces.StageContext) error {
 		"worker.ign",
 		"bootstrap.ign",
 		"metadata.json",
+		filepath.Join("openshift", "99-master-baked-image-store.yaml"),
 	} {
 		_ = os.Remove(filepath.Join(sc.ClusterDir(), name))
 	}

@@ -88,6 +88,16 @@ const (
 	ClusterStateRunning  = "running"
 	ClusterStateStopped  = "stopped"
 	ClusterStateError    = "error"
+
+	// BakedImagesLabel is the ext4 filesystem label of the read-only disk that
+	// carries the pre-pulled release payload (a CRI-O "additional image store").
+	// Both the live-ISO ignition and the installed node's MachineConfig mount
+	// the disk by this label, so device ordering on the VM is irrelevant.
+	BakedImagesLabel = "baked-images"
+	// BakedImagesMountPath is where the baked store disk is mounted on the node
+	// and the path added to CRI-O's additionalimagestores. CRI-O then serves
+	// release images from here instead of pulling them from quay.io.
+	BakedImagesMountPath = "/var/lib/baked-images"
 )
 
 // Config is the global on-disk configuration. There is no singleton; callers
@@ -168,6 +178,14 @@ type ClusterConfig struct {
 	// means off (use Domain + manual/provider DNS). Resolved from the
 	// --magic-dns flag's "auto"/"off" by the manager before any stage runs.
 	MagicDNS string `json:"magicDNS,omitempty"`
+
+	// BakeImages, when true, pre-pulls the entire OCP release payload into a
+	// read-only disk attached to the master so the install never reaches
+	// quay.io for platform images. The store is built once per OCP version,
+	// shared across clusters, and is multi-arch (every supported release arch),
+	// so an amd64 or aarch64 (Rosetta) node finds its images locally. See
+	// docs/dev/image-baking.md.
+	BakeImages bool `json:"bakeImages,omitempty"`
 
 	NetworkSubnet string   `json:"networkSubnet"`
 	IPAddresses   []string `json:"ipAddresses"`

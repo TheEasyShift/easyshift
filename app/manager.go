@@ -19,6 +19,7 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/openshift"
 	"github.com/TheEasyShift/easyshift/stages/allocatenetwork"
 	"github.com/TheEasyShift/easyshift/stages/applytlscerts"
+	"github.com/TheEasyShift/easyshift/stages/bakeimagestore"
 	"github.com/TheEasyShift/easyshift/stages/createmastervms"
 	"github.com/TheEasyShift/easyshift/stages/createnetwork"
 	"github.com/TheEasyShift/easyshift/stages/downloadbinaries"
@@ -77,6 +78,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		ensureclusterdir.New(),
 		downloadbinaries.New(d.Download, d.Cmd, d.Host),
 		downloadrhcos.New(d.Installer, d.Download),
+		bakeimagestore.New(d.ImageBaker, d.Host),
 		generatesshkey.New(d.Cmd, d.Host),
 		generateignition.New(d.Installer, d.DNS, d.Host),
 		bootMedia,

@@ -141,6 +141,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		tlsEmail    string
 		tlsStaging  bool
 		magicDNS    string
+		bakeImages  bool
 	)
 
 	cmd := &cobra.Command{
@@ -170,6 +171,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 				TLSEmail:     tlsEmail,
 				TLSStaging:   tlsStaging,
 				MagicDNS:     magicDNS,
+				BakeImages:   bakeImages,
 			}
 			// In a bridge-mode simulation there is no real node, so pretend it
 			// came up on its reserved IP — otherwise the verify-master-ip stage
@@ -238,6 +240,10 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		"Wildcard DNS service so cluster names resolve to the master IP with no records to manage: "+
 			"'auto' (NAT -> sslip.io, bridge -> off), 'sslip.io', 'nip.io', or 'off'. "+
 			"Mutually exclusive with --dns-provider.")
+	cmd.Flags().BoolVar(&bakeImages, "bake-images", false,
+		"Pre-pull the entire OCP release payload into a read-only disk attached to the master so "+
+			"the install never reaches quay.io for platform images. Built once per version (multi-arch: "+
+			"amd64 + aarch64), shared across clusters. Needs skopeo + virt-make-fs on PATH.")
 
 	_ = cmd.MarkFlagRequired("name")
 	return cmd

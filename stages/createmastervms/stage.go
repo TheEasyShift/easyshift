@@ -5,6 +5,7 @@ package createmastervms
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/TheEasyShift/easyshift/config"
@@ -55,9 +56,15 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 		return fmt.Errorf("query disk space at %s: %w", sc.Config.ConfigDir, err)
 	}
 	need := uint64(sc.Cluster.MasterDiskGB) * 1024 * 1024 * 1024
+	// Baking attaches a per-cluster copy of the store qcow2; count it.
+	if sc.Cluster.BakeImages {
+		if fi, err := os.Stat(config.ImageStoreQcowPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
+			need += uint64(fi.Size())
+		}
+	}
 	if avail < need {
-		return fmt.Errorf("insufficient disk under %s: have %d GiB, need %d GiB for master disk",
-			sc.Config.ConfigDir, avail>>30, sc.Cluster.MasterDiskGB)
+		return fmt.Errorf("insufficient disk under %s: have %d GiB, need %d GiB for master disk%s",
+			sc.Config.ConfigDir, avail>>30, need>>30, bakeNote(sc.Cluster.BakeImages))
 	}
 	if sc.Cluster.NetworkMode == config.NetworkModeBridge {
 		br, err := s.host.InspectBridge(sc.Cluster.Bridge)
@@ -101,6 +108,14 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 	role := fmt.Sprintf("master-%d", index)
 	vmName := fmt.Sprintf("%s-%s", role, c.Name)
 	mac := macFor(c, role)
+	var extraDisks []interfaces.ExtraDisk
+	if c.BakeImages {
+		disk, err := s.attachImageStore(ctx, sc, vmName)
+		if err != nil {
+			return err
+		}
+		extraDisks = append(extraDisks, disk)
+	}
 	spec := interfaces.VMSpec{
 		Name:        vmName,
 		MemoryMiB:   c.MasterRAM,
@@ -108,6 +123,7 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 		DiskSizeGiB: c.MasterDiskGB,
 		StoragePool: c.StoragePool,
 		MAC:         mac,
+		ExtraDisks:  extraDisks,
 	}
 	if runtime.GOOS == "darwin" {
 		// vfkit install phase: direct-kernel boot of the live PXE assets with
@@ -121,6 +137,32 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 		spec.BootISO = c.BootISOVolPath
 	}
 	return s.vm.Create(ctx, spec)
+}
+
+// attachImageStore uploads the cached, multi-arch baked store qcow2 into the
+// pool as a per-cluster volume (so cluster delete, which removes all of a
+// domain's storage, never strands another cluster) and returns it as a
+// read-only, shareable extra disk. The node mounts it by label and points
+// CRI-O's additionalimagestores at it.
+func (s *Stage) attachImageStore(ctx context.Context, sc *interfaces.StageContext, vmName string) (interfaces.ExtraDisk, error) {
+	// ImportDisk stats the source and returns a clear error if the bake-image-
+	// store stage never produced it, so no extra guard is needed here (and the
+	// raw stat would wrongly fail under --simulate, where no real file exists).
+	cached := config.ImageStoreQcowPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)
+	volPath, err := s.vm.ImportDisk(ctx, sc.Cluster.StoragePool, config.ImageStoreVolName(vmName), cached)
+	if err != nil {
+		return interfaces.ExtraDisk{}, fmt.Errorf("import baked image store into pool: %w", err)
+	}
+	return interfaces.ExtraDisk{Path: volPath, ReadOnly: true, Shareable: true}, nil
+}
+
+// bakeNote annotates the disk-space error when the baked image store inflates
+// the requirement, so the number isn't surprising.
+func bakeNote(baking bool) string {
+	if baking {
+		return " (incl. baked image store)"
+	}
+	return ""
 }
 
 func macFor(c *config.ClusterConfig, role string) string {

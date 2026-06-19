@@ -11,6 +11,7 @@ type Deps struct {
 	VM         VMManager
 	Net        NetworkProvisioner
 	Installer  Installer
+	ImageBaker ImageBaker
 	Files      FileServer
 	CSR        CSRApprover
 	Hostname   HostnameInjector
