@@ -3,7 +3,7 @@ MK_SOURCE := Makefile
 TARGET := easyshift
 
 CHECKMAKE := go run github.com/checkmake/checkmake/cmd/checkmake@v0.3.2
-GOLANGCI_LINT := go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1
+GOLANGCI_LINT := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 ACTIONLINT := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 
