@@ -19,7 +19,7 @@ The Makefile is the source of truth — `go build` directly skips the vet + gofm
 - `make lint.make` — runs `checkmake` against the Makefile (`maxBodyLength = 8` in `checkmake.ini`).
 - `make fix.go.fmt` — apply `go fmt` to fix formatting.
 
-`golangci-lint` (v1.59.1) and `checkmake` (v0.3.2) are pinned and invoked via `go run ...@version` — do not assume a system install.
+`golangci-lint` (v2.12.2) and `checkmake` (v0.3.2) are pinned and invoked via `go run ...@version` — do not assume a system install. golangci-lint is configured by `.golangci.yml` (errcheck excludes the `fmt.Fprint*` family).
 
 ## Architecture
 
