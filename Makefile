@@ -12,7 +12,7 @@ ACTIONLINT := go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 .PHONY: check
 
-check: lint.light build test
+check: lint build test
 
 .PHONY: lint.go.vet
 lint.go.vet:
@@ -52,7 +52,11 @@ lint.go.golangci: ## lint with golangci-lint
 	@$(GOLANGCI_LINT) run
 
 .PHONY: lint.go.full
-lint.go.full:  lint.go.light lint.go.golangci
+lint.go.full: lint.go.light lint.go.golangci
+
+.PHONY: lint.go
+lint.go: lint.go.full
+
 
 
 
@@ -71,7 +75,7 @@ lint.light: lint.make lint.workflows lint.go.light
 
 .PHONY: lint
 
-lint: lint.make lint.workflows lint.go.full
+lint: lint.make lint.workflows lint.go
 
 .PHONY: lint.workflows
 
