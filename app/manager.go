@@ -262,7 +262,7 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 		return fmt.Errorf("only single-master clusters are supported")
 	}
 	if c.WorkerCount != 0 {
-		return fmt.Errorf("Phase 1 supports SNO only: WorkerCount must be 0 (add workers later via addnode)")
+		return fmt.Errorf("phase 1 supports SNO only: WorkerCount must be 0 (add workers later via addnode)")
 	}
 	switch c.NetworkMode {
 	case config.NetworkModeNAT:

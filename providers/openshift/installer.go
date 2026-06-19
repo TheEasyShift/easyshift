@@ -102,7 +102,7 @@ func (i *OpenShiftInstaller) WriteInstallConfig(_ context.Context, spec interfac
 	if err != nil {
 		return fmt.Errorf("create install-config: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data := installConfigData{
 		InstallerSpec:    spec,
 		InstallationDisk: SNOInstallationDisk,

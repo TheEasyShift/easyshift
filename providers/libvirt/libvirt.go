@@ -243,7 +243,7 @@ func (p *LibvirtNetworkProvisioner) EnsureNetwork(ctx context.Context, spec inte
 	if err != nil {
 		return fmt.Errorf("write network XML: %w", err)
 	}
-	defer os.Remove(xmlFile)
+	defer func() { _ = os.Remove(xmlFile) }()
 
 	if _, err := p.virsh(ctx, "net-define", xmlFile); err != nil {
 		return fmt.Errorf("net-define %s: %w", spec.Name, err)
@@ -414,7 +414,7 @@ func writeTempFile(pattern string, data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(data); err != nil {
 		return "", err
 	}

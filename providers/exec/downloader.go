@@ -39,7 +39,7 @@ func (d *HTTPDownloader) Download(ctx context.Context, url, destPath string) err
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("http get %s: status %d", url, resp.StatusCode)
@@ -49,7 +49,7 @@ func (d *HTTPDownloader) Download(ctx context.Context, url, destPath string) err
 	if err != nil {
 		return fmt.Errorf("create %s: %w", destPath, err)
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
 		return fmt.Errorf("write %s: %w", destPath, err)

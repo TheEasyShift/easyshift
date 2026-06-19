@@ -73,7 +73,7 @@ func fetchAndStorePullSecret(ctx context.Context, cfg *config.Config, fetcher in
 		return fmt.Errorf("%w\n\n%s", err, manualFallback)
 	}
 	if err := config.ValidatePullSecretBytes(data); err != nil {
-		return fmt.Errorf("Red Hat returned an unusable pull secret: %w\n\n%s", err, manualFallback)
+		return fmt.Errorf("pull secret from Red Hat was unusable: %w\n\n%s", err, manualFallback)
 	}
 	if err := config.WritePullSecret(cfg.ConfigDir, data); err != nil {
 		return err

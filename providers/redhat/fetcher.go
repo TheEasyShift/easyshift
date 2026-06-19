@@ -68,7 +68,7 @@ func (f *Fetcher) StartDeviceAuth(ctx context.Context) (interfaces.DeviceAuthPro
 		return interfaces.DeviceAuthPrompt{}, fmt.Errorf("request device code from Red Hat SSO: %w", err)
 	}
 	if status != http.StatusOK {
-		return interfaces.DeviceAuthPrompt{}, fmt.Errorf("Red Hat SSO device endpoint returned HTTP %d: %s", status, body)
+		return interfaces.DeviceAuthPrompt{}, fmt.Errorf("device-code request to Red Hat SSO returned HTTP %d: %s", status, body)
 	}
 	var resp struct {
 		DeviceCode      string `json:"device_code"`
@@ -141,7 +141,7 @@ func (f *Fetcher) pollToken(ctx context.Context) (string, error) {
 		case "access_denied":
 			return "", fmt.Errorf("the login request was denied")
 		default:
-			return "", fmt.Errorf("Red Hat SSO token endpoint returned HTTP %d: %s", status, body)
+			return "", fmt.Errorf("token request to Red Hat SSO returned HTTP %d: %s", status, body)
 		}
 		if time.Now().After(f.expiresAt) {
 			return "", fmt.Errorf("the device code expired before the login was authorized; run the command again")

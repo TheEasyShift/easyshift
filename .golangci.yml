@@ -1,0 +1,12 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Writes to stdout/stderr and to in-memory trace writers can't
+      # meaningfully fail and checking each one is pure noise, so exclude
+      # the fmt print family rather than littering call sites with `_, _ =`.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln

@@ -69,7 +69,7 @@ func (s *Stage) downloadTarball(ctx context.Context, url, destDir string) error 
 	if err := s.dl.Download(ctx, url, tmp); err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if _, err := s.cmd.Run(ctx, "tar", "xzf", tmp, "-C", destDir); err != nil {
 		return fmt.Errorf("extract %s: %w", tmp, err)
 	}

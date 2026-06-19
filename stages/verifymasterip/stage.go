@@ -97,7 +97,7 @@ func (s *Stage) verify(ctx context.Context, mac, wantIP string) error {
 				"the node likely received a different DHCP address, and continuing would let etcd "+
 				"bootstrap on it and pin the cluster to the wrong address permanently. Verify the router "+
 				"DHCP reservation maps %s -> %s (and that no other host holds %s), then re-run "+
-				"`easyshift create`.", mac, wantIP, s.timeout, mac, wantIP, wantIP)
+				"`easyshift create`", mac, wantIP, s.timeout, mac, wantIP, wantIP)
 		}
 
 		select {
@@ -112,6 +112,6 @@ func mismatchErr(mac, gotIP, wantIP string) error {
 	return fmt.Errorf("master VM (MAC %s) came up on %s, but its reserved IP is %s; "+
 		"continuing would let etcd bootstrap on %s and pin the cluster to the wrong address permanently "+
 		"(the apiservers could never reach etcd). Fix the router DHCP reservation (%s -> %s) so the node "+
-		"gets %s on first boot, then re-run `easyshift create`.",
+		"gets %s on first boot, then re-run `easyshift create`",
 		mac, gotIP, wantIP, gotIP, mac, wantIP, wantIP)
 }

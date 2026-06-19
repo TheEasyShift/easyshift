@@ -56,8 +56,8 @@ func ResolveOCPVersion(ctx context.Context, dl interfaces.Downloader, channel st
 	if err != nil {
 		return "", fmt.Errorf("temp file: %w", err)
 	}
-	tmp.Close()
-	defer os.Remove(tmp.Name())
+	_ = tmp.Close()
+	defer func() { _ = os.Remove(tmp.Name()) }()
 
 	if err := dl.Download(ctx, ReleaseTxtURL(channel), tmp.Name()); err != nil {
 		return "", fmt.Errorf("download release.txt for channel %q: %w", channel, err)
