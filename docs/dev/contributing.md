@@ -24,7 +24,6 @@ building. For development you need Go 1.25+; the linters are pinned and run via
    ```sh
    make check        # vet + gofmt + build + test
    ```
-   Optionally `make lint.go.full` for the heavier `golangci-lint` pass.
 
 ## Layering rules (enforced by review)
 

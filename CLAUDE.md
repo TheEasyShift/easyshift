@@ -15,8 +15,9 @@ The Makefile is the source of truth — `go build` directly skips the vet + gofm
 - `make` / `make build` — vet, gofmt check, then build the `easyshift` binary at the repo root.
 - `make test` — gofmt + vet, then `go test ./...` (unit tests exist and must pass).
 - `make check` — lint + build + test. Run before pushing.
-- `make lint.go.full` — adds `golangci-lint` (heavier than `lint.go.light`, which is just vet + fmt).
+- `make lint.go/make lint.go.full` — lint the go code: vet + fmt + `golangci-lint`.
 - `make lint.make` — runs `checkmake` against the Makefile (`maxBodyLength = 8` in `checkmake.ini`).
+-  make lint - runs all linters.
 - `make fix.go.fmt` — apply `go fmt` to fix formatting.
 
 `golangci-lint` (v2.12.2) and `checkmake` (v0.3.2) are pinned and invoked via `go run ...@version` — do not assume a system install. golangci-lint is configured by `.golangci.yml` (errcheck excludes the `fmt.Fprint*` family).
