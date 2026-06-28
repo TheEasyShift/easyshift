@@ -131,6 +131,13 @@ type NetworkProvisioner interface {
 // there is no Linux equivalent (libvirt owns networking itself).
 type SidecarLauncher interface {
 	StartSidecar(ctx context.Context, name, socketPath string) (stop func(), err error)
+	// StopSidecar reaps the per-VM sidecar by its socket path. Unlike the stop
+	// func returned by StartSidecar (an in-memory closure, lost when the
+	// process that started the sidecar exits), this is the cross-process
+	// fallback: a stop/delete in a fresh CLI invocation calls it to terminate a
+	// sidecar the earlier create process left detached. Idempotent — no
+	// matching sidecar is treated as success.
+	StopSidecar(ctx context.Context, name, socketPath string) error
 }
 
 // NetworkPreflighter is an optional capability a NetworkProvisioner may
