@@ -241,6 +241,13 @@ func (m *VMManager) stopSidecar(name string) {
 	if stop != nil {
 		stop()
 	}
+	// Cross-process fallback: a stop/delete in a fresh CLI process has no
+	// in-memory stop handle (the closure lived in the create process, now
+	// exited), so reap the detached sidecar by its socket. Idempotent, so it
+	// runs even after stop() above without harm.
+	if m.sidecar != nil {
+		_ = m.sidecar.StopSidecar(context.Background(), name, m.sockPath(name))
+	}
 }
 
 // forceStop kills the vfkit process and waits for it to actually exit (so the
