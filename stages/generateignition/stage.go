@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/TheEasyShift/easyshift/config"
@@ -65,6 +66,14 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	spec.SSHPublicKey = string(pubKey)
 	if err := s.installer.WriteInstallConfig(ctx, spec); err != nil {
 		return err
+	}
+	if runtime.GOOS == "darwin" {
+		// vfkit attaches the Rosetta virtiofs device; drop the MachineConfig
+		// that mounts it and registers the x86-64 binfmt handler so the
+		// installed node runs amd64 images translated from first boot.
+		if err := s.installer.WriteRosettaManifest(ctx, spec); err != nil {
+			return err
+		}
 	}
 	return s.installer.CreateSingleNodeIgnition(ctx, spec)
 }

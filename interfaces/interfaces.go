@@ -174,6 +174,11 @@ type Installer interface {
 	WriteInstallConfig(ctx context.Context, spec InstallerSpec) error
 	CreateIgnitionConfigs(ctx context.Context, spec InstallerSpec) error
 	CreateSingleNodeIgnition(ctx context.Context, spec InstallerSpec) error
+	// WriteRosettaManifest drops a MachineConfig into the install dir that
+	// mounts the vfkit rosetta virtiofs share and registers the x86-64
+	// binfmt_misc handler, so the installed node runs amd64 binaries via
+	// Apple Rosetta. Called on macOS hosts before CreateSingleNodeIgnition.
+	WriteRosettaManifest(ctx context.Context, spec InstallerSpec) error
 	EmbedIgnitionInISO(ctx context.Context, spec InstallerSpec, isoPath, ignitionPath, outputPath string) error
 	// EmbedNetworkKeyfileInISO embeds a NetworkManager keyfile into the live
 	// ISO (coreos-installer iso network embed) so the node applies static
