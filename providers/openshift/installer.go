@@ -128,6 +128,23 @@ func (i *OpenShiftInstaller) CreateIgnitionConfigs(ctx context.Context, spec int
 	return nil
 }
 
+// WriteRosettaManifest drops the Rosetta MachineConfig into the install dir's
+// openshift/ directory. `create single-node-ignition-config` loads any
+// manifests already present there, so the virtiofs mount + binfmt_misc
+// registration are rendered into the installed node's ignition and amd64
+// binaries run translated from first boot. macOS (vfkit) hosts only.
+func (i *OpenShiftInstaller) WriteRosettaManifest(_ context.Context, spec interfaces.InstallerSpec) error {
+	dir := filepath.Join(spec.ClusterDir, "openshift")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create openshift manifests dir: %w", err)
+	}
+	path := filepath.Join(dir, RosettaMachineConfigName+".yaml")
+	if err := os.WriteFile(path, []byte(RenderRosettaMachineConfig()), 0o644); err != nil {
+		return fmt.Errorf("write rosetta MachineConfig: %w", err)
+	}
+	return nil
+}
+
 // CreateSingleNodeIgnition runs `openshift-install create single-node-ignition-config`.
 func (i *OpenShiftInstaller) CreateSingleNodeIgnition(ctx context.Context, spec interfaces.InstallerSpec) error {
 	if _, err := i.cmd.Run(ctx, spec.InstallerPath, "create", "single-node-ignition-config", "--dir", spec.ClusterDir); err != nil {

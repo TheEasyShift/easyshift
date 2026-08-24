@@ -311,6 +311,7 @@ type Installer struct {
 	WroteInstallConfig   bool
 	CreatedIgnitions     bool
 	CreatedSingleNodeIgn bool
+	WroteRosettaManifest bool
 	EmbeddedISO          bool
 	EmbeddedNetwork      bool
 	// LastNetworkKeyfile is the keyfile path passed to the most recent
@@ -344,6 +345,14 @@ func (i *Installer) CreateIgnitionConfigs(_ context.Context, spec interfaces.Ins
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.CreatedIgnitions = true
+	i.record(spec)
+	return i.Err
+}
+
+func (i *Installer) WriteRosettaManifest(_ context.Context, spec interfaces.InstallerSpec) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.WroteRosettaManifest = true
 	i.record(spec)
 	return i.Err
 }
@@ -896,6 +905,9 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		fmt.Fprintf(w, "\nInstaller methods invoked:\n")
 		if b.Installer.WroteInstallConfig {
 			fmt.Fprintln(w, "  - WriteInstallConfig")
+		}
+		if b.Installer.WroteRosettaManifest {
+			fmt.Fprintln(w, "  - WriteRosettaManifest (macOS amd64-via-Rosetta)")
 		}
 		if b.Installer.CreatedSingleNodeIgn {
 			fmt.Fprintln(w, "  - CreateSingleNodeIgnition")
