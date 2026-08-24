@@ -94,7 +94,7 @@ func (s *Stage) downloadKernel(ctx context.Context, url, dst string) error {
 	if err := s.dl.Download(ctx, url, tmp); err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	data, err := os.ReadFile(tmp)
 	if err != nil {
 		return err
