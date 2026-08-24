@@ -157,7 +157,7 @@ func (m *VMManager) launch(ctx context.Context, name string) error {
 	// diagnosable.
 	if logf, err := os.OpenFile(m.launchLogPath(name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = logf, logf
-		defer logf.Close()
+		defer func() { _ = logf.Close() }()
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("vfkit %s: launch: %w", name, err)
@@ -368,7 +368,7 @@ func (m *VMManager) createDisk(path string, sizeGiB int) error {
 	if err != nil {
 		return fmt.Errorf("vfkit: create disk: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := f.Truncate(int64(sizeGiB) * 1024 * 1024 * 1024); err != nil {
 		return fmt.Errorf("vfkit: size disk: %w", err)
 	}
