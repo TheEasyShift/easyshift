@@ -127,6 +127,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		workerCount int
 		masterRAM   int
 		workerRAM   int
+		masterDisk  int
 		networkMode string
 		bridge      string
 		masterMAC   string
@@ -148,26 +149,27 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		Annotations: map[string]string{annotationNeedsFileServer: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := &config.ClusterConfig{
-				Name:        name,
-				Domain:      baseDomain,
-				OCPVersion:  ocpVersion,
-				MasterCount: masterCount,
-				WorkerCount: workerCount,
-				MasterRAM:   masterRAM,
-				WorkerRAM:   workerRAM,
-				NetworkMode: networkMode,
-				Bridge:      bridge,
-				MasterMAC:   masterMAC,
-				MasterIP:    masterIP,
-				MachineCIDR: machineCIDR,
-				Gateway:     gateway,
-				DNS:         dns,
-				StoragePool: storagePool,
-				DNSProvider: dnsProvider,
-				DNSZone:     dnsZone,
-				TLSEmail:    tlsEmail,
-				TLSStaging:  tlsStaging,
-				MagicDNS:    magicDNS,
+				Name:         name,
+				Domain:       baseDomain,
+				OCPVersion:   ocpVersion,
+				MasterCount:  masterCount,
+				WorkerCount:  workerCount,
+				MasterRAM:    masterRAM,
+				WorkerRAM:    workerRAM,
+				MasterDiskGB: masterDisk,
+				NetworkMode:  networkMode,
+				Bridge:       bridge,
+				MasterMAC:    masterMAC,
+				MasterIP:     masterIP,
+				MachineCIDR:  machineCIDR,
+				Gateway:      gateway,
+				DNS:          dns,
+				StoragePool:  storagePool,
+				DNSProvider:  dnsProvider,
+				DNSZone:      dnsZone,
+				TLSEmail:     tlsEmail,
+				TLSStaging:   tlsStaging,
+				MagicDNS:     magicDNS,
 			}
 			// In a bridge-mode simulation there is no real node, so pretend it
 			// came up on its reserved IP — otherwise the verify-master-ip stage
@@ -202,6 +204,8 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 	cmd.Flags().IntVarP(&masterCount, "masters", "m", 1, "Number of master nodes (must be 1)")
 	cmd.Flags().IntVarP(&workerCount, "workers", "w", 0, "Number of worker nodes (Phase 1: must be 0; add later via addnode)")
 	cmd.Flags().IntVar(&masterRAM, "master-ram", 32768, "Master node RAM in MB")
+	cmd.Flags().IntVar(&masterDisk, "master-disk", 120,
+		"Master node disk size in GB (sparse; OpenShift recommends 120, smaller fits dev hosts with tight disks)")
 	cmd.Flags().IntVar(&workerRAM, "worker-ram", 16384, "Worker node RAM in MB")
 	cmd.Flags().StringVar(&networkMode, "network-mode", config.NetworkModeNAT,
 		"Network mode: 'nat' (libvirt NAT + HAProxy on host) or 'bridge' (attach to a host Linux bridge on the LAN)")
