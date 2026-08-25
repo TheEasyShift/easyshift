@@ -81,7 +81,7 @@ metadata:
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
-  name: openshift-storage-operator-group
+  name: %[8]s
   namespace: %[4]s
 spec:
   targetNamespaces:
@@ -90,15 +90,15 @@ spec:
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
-  name: odf-operator
+  name: %[9]s
   namespace: %[4]s
 spec:
   channel: %[5]s
-  name: odf-operator
+  name: %[9]s
   source: %[6]s
   sourceNamespace: %[7]s
   installPlanApproval: Automatic
-`, lvmsNamespace, lvmsOGName, lvmsSubName, odfNamespace, channel, catalogSource, catalogSourceNamespace)
+`, lvmsNamespace, lvmsOGName, lvmsSubName, odfNamespace, channel, catalogSource, catalogSourceNamespace, odfOGName, odfSubName)
 }
 
 // RenderLVMCluster returns the LVMCluster CR that builds a VG + thin pool
