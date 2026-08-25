@@ -235,17 +235,21 @@ func parseReleasePullspecs(data []byte) ([]string, error) {
 
 // --- CRI-O wiring renderers (pure) --------------------------------------
 
-// storageConfDropinPath is where the additional-image-store drop-in lands. The
-// containers/storage library merges *.conf from this dir over storage.conf.
-const storageConfDropinPath = "/etc/containers/storage.conf.d/10-baked-images.conf"
+// crioDropinPath is where the additional-image-store drop-in lands. It rides
+// CRI-O's own drop-in dir, NOT /etc/containers/storage.conf.d/: RHCOS 9.8's
+// containers-common (5.8) silently ignores storage.conf.d, which left the
+// store mounted but unread — every image still came from quay.io (found on
+// hardware; a crio storage_option drop-in surfaced all store images).
+const crioDropinPath = "/etc/crio/crio.conf.d/10-baked-images.conf"
 
-// RenderStorageConfDropin returns the storage.conf drop-in that registers the
-// baked store as a read-only CRI-O additional image store.
-func RenderStorageConfDropin() string {
-	return fmt.Sprintf(`[storage]
-[storage.options]
-additionalimagestores = [
-  "%s",
+// RenderCRIODropin returns the CRI-O drop-in that registers the baked store
+// as a read-only additional image store via the overlay driver's imagestore
+// option. RHCOS ships no active storage_option, so this list replaces
+// nothing.
+func RenderCRIODropin() string {
+	return fmt.Sprintf(`[crio]
+storage_option = [
+  "overlay.imagestore=%s",
 ]
 `, config.BakedImagesMountPath)
 }
@@ -283,7 +287,7 @@ const MachineConfigName = "99-master-baked-image-store"
 // operators.
 func RenderMachineConfig() string {
 	unitName, unitContents := RenderMountUnit()
-	storageB64 := base64.StdEncoding.EncodeToString([]byte(RenderStorageConfDropin()))
+	storageB64 := base64.StdEncoding.EncodeToString([]byte(RenderCRIODropin()))
 	return fmt.Sprintf(`apiVersion: machineconfiguration.openshift.io/v1
 kind: MachineConfig
 metadata:
@@ -307,10 +311,10 @@ spec:
         enabled: true
         contents: |
 %s
-`, MachineConfigName, storageConfDropinPath, storageB64, unitName, indent(unitContents, "          "))
+`, MachineConfigName, crioDropinPath, storageB64, unitName, indent(unitContents, "          "))
 }
 
-// MergeBakedStoreIntoIgnition adds the storage.conf drop-in file and the mount
+// MergeBakedStoreIntoIgnition adds the CRI-O drop-in file and the mount
 // unit to a raw Ignition config (the bootstrap-in-place-for-live-iso.ign), so
 // the baked store is also used during the live-ISO bootstrap phase. It edits
 // the JSON structurally to preserve whatever the installer emitted.
@@ -326,11 +330,11 @@ func MergeBakedStoreIntoIgnition(ignitionJSON []byte) ([]byte, error) {
 	}
 	files, _ := storage["files"].([]any)
 	files = append(files, map[string]any{
-		"path":      storageConfDropinPath,
+		"path":      crioDropinPath,
 		"mode":      420,
 		"overwrite": true,
 		"contents": map[string]any{
-			"source": "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(RenderStorageConfDropin())),
+			"source": "data:text/plain;base64," + base64.StdEncoding.EncodeToString([]byte(RenderCRIODropin())),
 		},
 	})
 	storage["files"] = files

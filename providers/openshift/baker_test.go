@@ -69,10 +69,14 @@ func TestRenderMountUnit(t *testing.T) {
 	}
 }
 
-func TestRenderStorageConfDropin(t *testing.T) {
-	got := RenderStorageConfDropin()
-	if !strings.Contains(got, "additionalimagestores") || !strings.Contains(got, "/var/lib/baked-images") {
-		t.Fatalf("storage.conf drop-in missing key/path:\n%s", got)
+func TestRenderCRIODropin(t *testing.T) {
+	got := RenderCRIODropin()
+	// The additional image store must ride CRI-O's storage_option: RHCOS 9.8's
+	// containers-common (5.8) does not read /etc/containers/storage.conf.d/
+	// drop-ins, so a storage.conf drop-in is silently ignored (found on
+	// hardware: the node pulled everything from quay.io).
+	if !strings.Contains(got, "[crio]") || !strings.Contains(got, "overlay.imagestore=/var/lib/baked-images") {
+		t.Fatalf("crio drop-in missing storage_option/path:\n%s", got)
 	}
 }
 
@@ -82,7 +86,7 @@ func TestRenderMachineConfig(t *testing.T) {
 		"kind: MachineConfig",
 		"machineconfiguration.openshift.io/role: master",
 		MachineConfigName,
-		"/etc/containers/storage.conf.d/10-baked-images.conf",
+		"/etc/crio/crio.conf.d/10-baked-images.conf",
 		"data:text/plain;base64,",
 		`var-lib-baked\x2dimages.mount`,
 	} {
@@ -130,7 +134,7 @@ func TestMergeBakedStoreIntoIgnition(t *testing.T) {
 	}
 	var foundDropin, foundMount bool
 	for _, f := range cfg.Storage.Files {
-		if f.Path == storageConfDropinPath {
+		if f.Path == crioDropinPath {
 			foundDropin = true
 			if !strings.HasPrefix(f.Contents.Source, "data:text/plain;base64,") {
 				t.Errorf("dropin source not a data URL: %q", f.Contents.Source)
@@ -158,7 +162,7 @@ func TestMergeBakedStoreIntoIgnition_EmptyConfig(t *testing.T) {
 	}
 	// The unit name's backslash is JSON-escaped in raw output; assert on the
 	// dropin path and the mount unit body, which survive verbatim.
-	if !strings.Contains(string(out), storageConfDropinPath) ||
+	if !strings.Contains(string(out), crioDropinPath) ||
 		!strings.Contains(string(out), "Where=/var/lib/baked-images") {
 		t.Fatalf("merge into empty config dropped entries:\n%s", out)
 	}
