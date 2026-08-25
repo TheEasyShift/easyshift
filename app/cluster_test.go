@@ -153,6 +153,31 @@ func TestCreateCluster_NoBakeByDefault(t *testing.T) {
 	}
 }
 
+// TestCreateCluster_ODFDataDisk asserts the master gets a writable data disk
+// after the bake store, and plain clusters get none.
+func TestCreateCluster_ODFDataDisk(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	c := newTestCluster("odfy")
+	c.ODF = true
+	c.BakeImages = true
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	disks := bundle.VM.Created[0].ExtraDisks
+	if len(disks) != 2 {
+		t.Fatalf("extra disks: got %d want 2 (store + odf)", len(disks))
+	}
+	odf := disks[1] // MUST be after the bake store: device path math depends on it
+	if odf.ReadOnly || odf.Shareable || !strings.Contains(odf.Path, "-odf.") {
+		t.Errorf("odf disk wrong: %+v", odf)
+	}
+	if len(bundle.VM.CreatedDataDisks) != 1 {
+		t.Errorf("CreateDataDisk calls: got %d want 1", len(bundle.VM.CreatedDataDisks))
+	}
+}
+
 // TestCreateCluster_HappyPath walks the full stage list with all-fake deps
 // and asserts each interface saw the expected call.
 func TestCreateCluster_HappyPath(t *testing.T) {
