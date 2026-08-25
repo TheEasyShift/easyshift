@@ -1371,6 +1371,19 @@ func TestValidateODFDefaults(t *testing.T) {
 	if err := mgr.Create(context.Background(), bad); err == nil {
 		t.Error("expected error: --odf-disk without --odf")
 	}
+
+	// DataPVCSizeGi = ODFDiskGB/3 - 3 goes non-positive below 12 GB; the
+	// validation floor must catch this before any stage runs.
+	tooSmall := newTestCluster("odftiny")
+	tooSmall.ODF = true
+	tooSmall.ODFDiskGB = 10
+	err := mgr.Create(context.Background(), tooSmall)
+	if err == nil {
+		t.Fatal("expected error: --odf-disk below the 12 GB floor")
+	}
+	if !strings.Contains(err.Error(), "--odf-disk") {
+		t.Errorf("error should mention --odf-disk: %v", err)
+	}
 }
 
 func readState(t *testing.T, configDir, clusterName string) *interfaces.ClusterState {

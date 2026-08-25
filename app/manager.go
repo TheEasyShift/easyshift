@@ -324,6 +324,9 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 	if !c.ODF && c.ODFDiskGB != 0 {
 		return fmt.Errorf("--odf-disk requires --odf")
 	}
+	if c.ODF && c.ODFDiskGB != 0 && c.ODFDiskGB < 12 {
+		return fmt.Errorf("--odf-disk must be at least 12 GB (a third of it, minus overhead, becomes the per-OSD volume)")
+	}
 	return nil
 }
 
