@@ -111,10 +111,10 @@ func TestCreateCluster_BakeImages(t *testing.T) {
 	if !bundle.Installer.WroteImageStoreManifest {
 		t.Error("expected WriteImageStoreManifest to be called")
 	}
-	// Merging the image store into the *live ISO* ignition is part of the
-	// Linux boot-media path; macOS serves ignition over HTTP (publish-pxe-assets),
-	// where the equivalent merge is wired in the on-hardware phase.
-	if runtime.GOOS != "darwin" && !bundle.Installer.MergedImageStoreIgnition {
+	// Both boot-media paths wire the store into the bootstrap ignition: Linux
+	// merges into the live-ISO ignition (embed-ignition-iso), macOS into the
+	// HTTP-served ignition (publish-pxe-assets).
+	if !bundle.Installer.MergedImageStoreIgnition {
 		t.Error("expected MergeImageStoreIntoLiveISOIgnition to be called")
 	}
 	if got := len(bundle.VM.ImportedDisks); got != 1 {

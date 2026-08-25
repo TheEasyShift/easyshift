@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
@@ -289,11 +291,21 @@ func (m *VMManager) buildArgs(name string, ls launchSpec, phase string) []string
 		"--cpus", strconv.Itoa(s.VCPUs),
 		"--memory", strconv.Itoa(s.MemoryMiB),
 		"--device", "virtio-blk,path=" + ls.DiskPath,
-		"--device", "virtio-net,unixSocketPath=" + m.sockPath(name) + ",mac=" + s.MAC,
-		"--device", "rosetta,mountTag=rosetta",
-		"--device", "virtio-serial,logFilePath=" + m.consolePath(name),
-		"--pidfile", m.pidPath(name),
 	}
+	// Extra disks (the baked image store) attach after the primary disk in both
+	// phases: the live install mounts the store by label during bootstrap, the
+	// run phase for the node's lifetime. vfkit's virtio-blk has no read-only
+	// option; the guest mounts ro and each cluster gets its own (APFS-cloned)
+	// copy, so a stray write can't corrupt another cluster's store.
+	for _, d := range s.ExtraDisks {
+		args = append(args, "--device", "virtio-blk,path="+d.Path)
+	}
+	args = append(args,
+		"--device", "virtio-net,unixSocketPath="+m.sockPath(name)+",mac="+s.MAC,
+		"--device", "rosetta,mountTag=rosetta",
+		"--device", "virtio-serial,logFilePath="+m.consolePath(name),
+		"--pidfile", m.pidPath(name),
+	)
 	switch phase {
 	case phaseRun:
 		args = append(args, "--bootloader", "efi,variable-store="+m.efiPath(name)+",create")
@@ -340,21 +352,59 @@ func (m *VMManager) Stop(_ context.Context, name string) error {
 	return nil
 }
 
-// Delete stops the VM and removes its state dir.
+// Delete stops the VM and removes its state dir, plus the imported
+// image-store copy (which lives beside — not inside — the VM dir because
+// ImportDisk runs before Create).
 func (m *VMManager) Delete(ctx context.Context, name string) error {
 	_ = m.Stop(ctx, name)
+	_ = os.Remove(filepath.Join(m.stateDir, config.ImageStoreVolName(name)))
 	return os.RemoveAll(m.vmDir(name))
 }
 
 // CheckAccess: vfkit presence is verified in preflight via LookPath.
 func (m *VMManager) CheckAccess(_ context.Context) error { return nil }
 
-// ImportISO / ImportDisk / RemoveISO / StoragePoolActive are libvirt
-// storage-pool concepts with no vfkit analog (boot uses PXE assets over HTTP).
-func (m *VMManager) ImportISO(_ context.Context, _, _, _ string) (string, error)  { return "", nil }
-func (m *VMManager) ImportDisk(_ context.Context, _, _, _ string) (string, error) { return "", nil }
-func (m *VMManager) RemoveISO(_ context.Context, _, _ string) error               { return nil }
-func (m *VMManager) StoragePoolActive(_ context.Context, _ string) error          { return nil }
+// ImportISO / RemoveISO / StoragePoolActive are libvirt storage-pool concepts
+// with no vfkit analog (boot uses PXE assets over HTTP).
+func (m *VMManager) ImportISO(_ context.Context, _, _, _ string) (string, error) { return "", nil }
+func (m *VMManager) RemoveISO(_ context.Context, _, _ string) error              { return nil }
+func (m *VMManager) StoragePoolActive(_ context.Context, _ string) error         { return nil }
+
+// ImportDisk copies localPath into the state dir as volName ("pool" has no
+// vfkit meaning) and returns that path for use as an ExtraDisk. APFS clonefile
+// (cp -c) makes the per-cluster copy instant and space-free until modified; a
+// plain copy is the fallback for non-APFS volumes. The copy is removed by
+// Delete of the VM whose name volName embeds (config.ImageStoreVolName).
+func (m *VMManager) ImportDisk(_ context.Context, _, volName, localPath string) (string, error) {
+	if _, err := os.Stat(localPath); err != nil {
+		return "", fmt.Errorf("vfkit: import disk: source %s: %w (did the bake-image-store stage run?)", localPath, err)
+	}
+	dst := filepath.Join(m.stateDir, volName)
+	_ = os.Remove(dst)
+	if out, err := exec.Command("cp", "-c", localPath, dst).CombinedOutput(); err != nil {
+		if copyErr := copyFile(localPath, dst); copyErr != nil {
+			return "", fmt.Errorf("vfkit: import disk: clone failed (%v: %s) and copy failed: %w", err, strings.TrimSpace(string(out)), copyErr)
+		}
+	}
+	return dst, nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
 
 // createDisk creates a sparse raw disk image of sizeGiB if it doesn't exist.
 func (m *VMManager) createDisk(path string, sizeGiB int) error {

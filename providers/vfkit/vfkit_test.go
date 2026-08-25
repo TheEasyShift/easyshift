@@ -2,9 +2,12 @@ package vfkit
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
 
@@ -129,10 +132,54 @@ func TestISONoops(t *testing.T) {
 	if _, err := m.ImportISO(context.Background(), "p", "v", "/tmp/x"); err != nil {
 		t.Errorf("ImportISO no-op: %v", err)
 	}
-	if _, err := m.ImportDisk(context.Background(), "p", "v", "/tmp/x"); err != nil {
-		t.Errorf("ImportDisk no-op: %v", err)
-	}
 	if err := m.StoragePoolActive(context.Background(), "p"); err != nil {
 		t.Errorf("StoragePoolActive no-op: %v", err)
+	}
+}
+
+func TestBuildArgs_ExtraDisks(t *testing.T) {
+	m := newMgr(t)
+	ls := installSpec()
+	ls.DiskPath = "/d/disk.img"
+	ls.Spec.ExtraDisks = []interfaces.ExtraDisk{{Path: "/cache/store.img", ReadOnly: true, Shareable: true}}
+	for _, phase := range []string{phaseInstall, phaseRun} {
+		args := m.buildArgs("master-0-demo", ls, phase)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "virtio-blk,path=/cache/store.img") {
+			t.Errorf("%s phase: extra disk not attached: %v", phase, args)
+		}
+		// The store must come after the primary OS disk so the guest's
+		// by-label mount is unambiguous and /dev/vda stays the install disk.
+		if strings.Index(joined, "path=/d/disk.img") > strings.Index(joined, "path=/cache/store.img") {
+			t.Errorf("%s phase: extra disk attached before primary: %v", phase, args)
+		}
+	}
+}
+
+func TestImportDiskAndDeleteCleanup(t *testing.T) {
+	m := newMgr(t)
+	src := filepath.Join(t.TempDir(), "store.img")
+	if err := os.WriteFile(src, []byte("STORE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vol := config.ImageStoreVolName("master-0-demo")
+	got, err := m.ImportDisk(context.Background(), "ignored-pool", vol, src)
+	if err != nil {
+		t.Fatalf("ImportDisk: %v", err)
+	}
+	data, err := os.ReadFile(got)
+	if err != nil || string(data) != "STORE" {
+		t.Fatalf("imported disk unreadable at %q: %v", got, err)
+	}
+	// Missing source must error clearly (the bake stage never produced it).
+	if _, err := m.ImportDisk(context.Background(), "p", vol, src+".missing"); err == nil {
+		t.Error("ImportDisk with missing source: expected error")
+	}
+	// Delete must remove the imported store copy along with the VM dir.
+	if err := m.Delete(context.Background(), "master-0-demo"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(got); !os.IsNotExist(err) {
+		t.Errorf("imported disk %q survived Delete", got)
 	}
 }

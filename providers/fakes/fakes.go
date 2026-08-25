@@ -485,7 +485,7 @@ func (b *ImageBaker) Ready(spec interfaces.BakeSpec) (bool, error) {
 		return *b.ReadyForced, b.Err
 	}
 	for _, s := range b.Baked {
-		if s.OutputQcowPath == spec.OutputQcowPath {
+		if s.OutputDiskPath == spec.OutputDiskPath {
 			return true, b.Err
 		}
 	}
@@ -925,7 +925,7 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 	if len(b.ImageBaker.Baked) > 0 {
 		fmt.Fprintf(w, "\nImage stores baked (%d):\n", len(b.ImageBaker.Baked))
 		for _, s := range b.ImageBaker.Baked {
-			fmt.Fprintf(w, "  version=%s  -> %s\n", s.Version, s.OutputQcowPath)
+			fmt.Fprintf(w, "  version=%s  -> %s\n", s.Version, s.OutputDiskPath)
 		}
 	}
 

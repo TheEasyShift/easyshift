@@ -239,8 +239,9 @@ type BakeSpec struct {
 	PullSecretPath string
 	// OverlayDir is the CRI-O graphroot skopeo copies images into.
 	OverlayDir string
-	// OutputQcowPath is the packed, labeled qcow2 to produce from OverlayDir.
-	OutputQcowPath string
+	// OutputDiskPath is the packed, labeled disk image to produce from
+	// OverlayDir (qcow2 on Linux, raw on macOS — see ImageStoreDiskPath).
+	OutputDiskPath string
 }
 
 // ImageBaker pre-pulls the OCP release payload into a read-only disk image so
@@ -250,7 +251,7 @@ type ImageBaker interface {
 	// the bake stage can skip the (expensive) rebuild on resume.
 	Ready(spec BakeSpec) (bool, error)
 	// Bake enumerates the release payload for every supported arch, copies each
-	// image into the overlay store, and packs it into OutputQcowPath. Must
+	// image into the overlay store, and packs it into OutputDiskPath. Must
 	// tolerate retry after a partial run.
 	Bake(ctx context.Context, spec BakeSpec) error
 }

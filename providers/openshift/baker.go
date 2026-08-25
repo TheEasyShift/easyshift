@@ -5,8 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/TheEasyShift/easyshift/config"
@@ -45,7 +48,7 @@ func NewOpenShiftImageBaker(cmd interfaces.CommandRunner) *OpenShiftImageBaker {
 // Ready reports whether the packed qcow2 already exists and is non-empty, so a
 // resumed create skips the multi-GB rebuild.
 func (b *OpenShiftImageBaker) Ready(spec interfaces.BakeSpec) (bool, error) {
-	fi, err := os.Stat(spec.OutputQcowPath)
+	fi, err := os.Stat(spec.OutputDiskPath)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -89,19 +92,81 @@ func (b *OpenShiftImageBaker) Bake(ctx context.Context, spec interfaces.BakeSpec
 		}
 	}
 
-	// Pack the store into a fresh labeled ext4 qcow2. virt-make-fs runs rootless
-	// (libguestfs supermin), so this stays within easyshift's no-root contract.
-	_ = os.Remove(spec.OutputQcowPath)
-	if _, err := b.cmd.Run(ctx, "virt-make-fs",
-		"--type=ext4",
-		"--label="+config.BakedImagesLabel,
-		"--format=qcow2",
-		"--size=+1G", // headroom over the store contents for fs metadata
-		spec.OverlayDir, spec.OutputQcowPath,
-	); err != nil {
-		return fmt.Errorf("virt-make-fs pack image store: %w", err)
+	// Pack the store into a fresh labeled ext4 disk image. Both packers run
+	// rootless, staying within easyshift's no-root contract.
+	_ = os.Remove(spec.OutputDiskPath)
+	sizeMiB, err := packSizeMiB(spec.OverlayDir)
+	if err != nil {
+		return fmt.Errorf("size image store: %w", err)
+	}
+	tool, args := PackCommand(runtime.GOOS, spec.OverlayDir, spec.OutputDiskPath, sizeMiB)
+	if _, err := b.cmd.Run(ctx, tool, args...); err != nil {
+		return fmt.Errorf("%s pack image store: %w", tool, err)
 	}
 	return nil
+}
+
+// PackCommand returns the command that packs overlayDir into a labeled ext4
+// disk image at outPath. Linux uses virt-make-fs (libguestfs supermin, qcow2
+// for the libvirt pool) and sizes the fs itself; macOS has no libguestfs, so
+// mke2fs -d populates a raw image (vfkit's virtio-blk takes raw) at an
+// explicit size of sizeMiB.
+func PackCommand(goos, overlayDir, outPath string, sizeMiB int64) (string, []string) {
+	if goos == "darwin" {
+		return ResolveMke2fs(), []string{
+			"-q",
+			"-t", "ext4",
+			"-L", config.BakedImagesLabel,
+			"-d", overlayDir,
+			"-m", "0", // no root-reserved blocks on a read-only store
+			outPath,
+			fmt.Sprintf("%dm", sizeMiB),
+		}
+	}
+	return "virt-make-fs", []string{
+		"--type=ext4",
+		"--label=" + config.BakedImagesLabel,
+		"--format=qcow2",
+		"--size=+1G", // headroom over the store contents for fs metadata
+		overlayDir, outPath,
+	}
+}
+
+// ResolveMke2fs returns the first usable mke2fs candidate (Homebrew's
+// e2fsprogs is keg-only, so its sbin is normally off PATH). Falls back to the
+// bare name so the eventual exec error names the missing tool.
+func ResolveMke2fs() string {
+	for _, c := range config.MKE2FSCandidates {
+		if strings.Contains(c, "/") {
+			if _, err := os.Stat(c); err == nil {
+				return c
+			}
+			continue
+		}
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	return "mke2fs"
+}
+
+// packSizeMiB walks dir and returns its content size plus fs-metadata headroom
+// (10% + 1 GiB), in MiB — the explicit size mke2fs needs.
+func packSizeMiB(dir string) (int64, error) {
+	var bytes int64
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if info, err := d.Info(); err == nil && d.Type().IsRegular() {
+			bytes += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return (bytes+bytes/10)/(1024*1024) + 1024, nil
 }
 
 // enumerate returns the de-duplicated union of release payload pullspecs across

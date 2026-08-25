@@ -58,7 +58,7 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	need := uint64(sc.Cluster.MasterDiskGB) * 1024 * 1024 * 1024
 	// Baking attaches a per-cluster copy of the store qcow2; count it.
 	if sc.Cluster.BakeImages {
-		if fi, err := os.Stat(config.ImageStoreQcowPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
+		if fi, err := os.Stat(config.ImageStoreDiskPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
 			need += uint64(fi.Size())
 		}
 	}
@@ -148,7 +148,7 @@ func (s *Stage) attachImageStore(ctx context.Context, sc *interfaces.StageContex
 	// ImportDisk stats the source and returns a clear error if the bake-image-
 	// store stage never produced it, so no extra guard is needed here (and the
 	// raw stat would wrongly fail under --simulate, where no real file exists).
-	cached := config.ImageStoreQcowPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)
+	cached := config.ImageStoreDiskPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)
 	volPath, err := s.vm.ImportDisk(ctx, sc.Cluster.StoragePool, config.ImageStoreVolName(vmName), cached)
 	if err != nil {
 		return interfaces.ExtraDisk{}, fmt.Errorf("import baked image store into pool: %w", err)

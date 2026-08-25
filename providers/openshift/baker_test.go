@@ -163,3 +163,27 @@ func TestMergeBakedStoreIntoIgnition_EmptyConfig(t *testing.T) {
 		t.Fatalf("merge into empty config dropped entries:\n%s", out)
 	}
 }
+
+func TestPackCommand(t *testing.T) {
+	name, args := PackCommand("linux", "/cache/store", "/cache/store.qcow2", 4096)
+	if name != "virt-make-fs" {
+		t.Errorf("linux pack tool: got %q want virt-make-fs", name)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--type=ext4", "--label=baked-images", "--format=qcow2", "/cache/store", "/cache/store.qcow2"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("linux pack args missing %q: %v", want, args)
+		}
+	}
+
+	name, args = PackCommand("darwin", "/cache/store", "/cache/store.img", 4096)
+	if !strings.Contains(name, "mke2fs") {
+		t.Errorf("darwin pack tool: got %q want mke2fs", name)
+	}
+	joined = strings.Join(args, " ")
+	for _, want := range []string{"-t ext4", "-L baked-images", "-d /cache/store", "/cache/store.img", "4096m"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("darwin pack args missing %q: %v", want, args)
+		}
+	}
+}
