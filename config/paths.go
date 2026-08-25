@@ -62,6 +62,12 @@ func ImageStoreVolName(name string) string {
 	return "easyshift-" + name + "-imagestore." + imageStoreDiskExt()
 }
 
+// ODFVolName is the per-cluster name of the ODF data disk: a libvirt pool
+// volume on Linux, a file in the vfkit state dir on macOS.
+func ODFVolName(name string) string {
+	return "easyshift-" + name + "-odf." + imageStoreDiskExt()
+}
+
 func imageStoreDiskExt() string {
 	if runtime.GOOS == "darwin" {
 		return "img"

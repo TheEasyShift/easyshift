@@ -187,6 +187,14 @@ type ClusterConfig struct {
 	// docs/dev/image-baking.md.
 	BakeImages bool `json:"bakeImages,omitempty"`
 
+	// ODF, when true, installs OpenShift Data Foundation after the cluster
+	// converges: a dedicated data disk, LVMS thin pool, and a single-node
+	// Ceph StorageCluster. See docs/dev/odf.md.
+	ODF bool `json:"odf,omitempty"`
+	// ODFDiskGB is the sparse backing data disk size (GB). Usable Ceph
+	// capacity is about a third of this. 0 means the default (100).
+	ODFDiskGB int `json:"odfDiskGB,omitempty"`
+
 	NetworkSubnet string   `json:"networkSubnet"`
 	IPAddresses   []string `json:"ipAddresses"`
 	MACAddresses  []string `json:"macAddresses"`
