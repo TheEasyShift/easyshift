@@ -3,12 +3,13 @@
 Pending work, grouped by feature. Detailed designs live in
 `docs/superpowers/specs/`, execution plans in `docs/superpowers/plans/`.
 
-## macOS (Apple Silicon) backend — branch `rtalur-macos-backend`
+## macOS (Apple Silicon) backend — merged
 
 Done on hardware: full SNO convergence via the console-driven install→EFI
-transition, Rosetta amd64 translation through CRI-O (needed the virtiofs share
-mounted with `context=container_file_t` — see the Task 13 notes in the spec),
-`easyshift stop`/`start`, and the `--master-disk` flag.
+transition, Rosetta amd64 translation through CRI-O from first boot (needed
+the virtiofs share mounted with `context=container_file_t` and the
+`create manifests` ordering fix — see the specs), `easyshift stop`/`start`,
+and the `--master-disk` flag.
 
 - [ ] **Two-cluster DR check (plan Task 13, step 2) — deferred, needs a
       bigger host (≥ 48 GB RAM)**: the 24 GB dev Mac cannot keep two active
@@ -20,10 +21,6 @@ mounted with `context=container_file_t` — see the Task 13 notes in the spec),
 - [ ] **Memory preflight**: warn (or block) at create when the combined RAM
       of running easyshift VMs plus the new master would exceed physical RAM;
       suggest `easyshift stop <other>` or a lower `--master-ram`.
-- [ ] **Verify Rosetta from first boot**: dr1 validated the MachineConfig via
-      a post-install `oc apply`; a fresh create with the current binary ships
-      it in the install ignition — confirm binfmt is live on first boot during
-      the next single-cluster validation run.
 - [ ] **Bridge mode on macOS**: deferred this phase (`InspectBridge` is a stub
       on darwin). Needs a vmnet bridged-mode story before LAN-reachable
       clusters work on Mac.
@@ -35,10 +32,10 @@ mounted with `context=container_file_t` — see the Task 13 notes in the spec),
 with the store mounted read-only from first boot, CRI-O serving ~173 store
 images via the crio drop-in, only 8 network image pulls and 1.0 GiB total RX
 in 20 min (the broken run pulled 7.1 GiB in five). Rosetta amd64 execution
-also verified from first boot. Three hardware-found fixes live on branch
-`rtalur-bake-followups`: APFS-clone-aware disk preflight, `create manifests`
-before extra-manifest drops (they were silently ignored), and the CRI-O
-drop-in replacing the unsupported `storage.conf.d` mechanism.
+also verified from first boot. Three hardware-found fixes merged in #18:
+APFS-clone-aware disk preflight, `create manifests` before extra-manifest
+drops (they were silently ignored), and the CRI-O drop-in replacing the
+unsupported `storage.conf.d` mechanism.
 
 - [ ] **Productize the macOS store builder.** skopeo cannot author an overlay
       container store on macOS (Linux-only graph driver), so the baker's
@@ -65,6 +62,19 @@ drop-in replacing the unsupported `storage.conf.d` mechanism.
 See [docs/dev/odf.md](docs/dev/odf.md) and
 [docs/superpowers/specs/2026-08-25-odf-single-node-design.md](docs/superpowers/specs/2026-08-25-odf-single-node-design.md).
 
+- [ ] **Validate full-feature `--odf` on a big host** (post-#20: trim, never
+      disable — NooBaa/RGW/ODF monitoring enabled, floor 24576 MiB). Does not
+      fit the 24 GB dev Mac; run on the 36 GB macOS or the 128 GB Linux host:
+      `easyshift create -n odffull --odf --master-disk 60`, then StorageCluster
+      Ready, HEALTH_OK, both StorageClasses, noobaa/rgw pods Running, an
+      ObjectBucketClaim binds, PVC write test. On Linux this same run doubles
+      as the first Linux-side validation of the qcow2/libvirt data-disk path.
+- [ ] **`--odf-profile`** — expose ODF's native `resourceProfile`
+      (lean/balanced/performance, `pkg/defaults/resources.go`) plus count
+      knobs (OSD count, RGW instances) for hosts with real memory. Measured
+      request math: dev-trimmed ~19 GiB; lean all-features ~47 GiB (~64 GB
+      host, or ~48 GB with a single OSD and object off); balanced ~66 GiB
+      (~96 GB host). VM sizes run ~3–4 GiB above requests.
 - [ ] **`easyshift odf remove` (day-2, keep the cluster).** `install-odf`'s
       `Rollback` is intentionally a no-op — it only runs during
       `easyshift delete`, where the VM and both disks are destroyed moments
