@@ -149,7 +149,7 @@ allowVolumeExpansion: true
 // small. Per the spike, the default plugin container alone requests 250Mi;
 // ALL controller containers must be floored, not just the four sidecars
 // (attacher/provisioner/resizer/snapshotter), or the trims don't fit an
-// 8vCPU/19456Mi node:
+// 8vCPU/24576Mi node:
 //   - plugin: 100Mi / 50m
 //   - attacher, provisioner, resizer, snapshotter: 50Mi / 25m each
 //   - omapGenerator: 50Mi / 10m
@@ -269,19 +269,12 @@ const deviceSetTSC = `      topologySpreadConstraints:
             operator: Exists
 `
 
-// RenderStorageCluster returns the trimmed StorageCluster CR, sized for a
-// single node. pvcGi is the per-OSD dataPVCTemplate request in GiB (the
-// caller derives it from ODFDiskGB: (ODFDiskGB/3) - 3, per the design's
-// sizing note — mon PVCs and thin-pool metadata share the same pool).
-//
-// Three deltas on top of the dfmicro reference recipe, all hardware-validated
-// on ODF 4.22 (see the spike results): the device set is count: 3, replica: 1
-// (NOT replica: 3, which re-raises getMinimumNodes past the SINGLE_NODE
-// relaxation); the device set carries non-empty placement AND
-// preparePlacement, each the no-op TSC in deviceSetTSC (an empty placement is
-// ignored, and the SINGLE_NODE default TSC has no topologyKey); and both PVC
-// templates use easyshift's own Immediate-binding StorageClass instead of
-// dfmicro's topolvm-provisioner-immediate.
+// RenderStorageCluster returns the single-node StorageCluster. Production
+// features (NooBaa, RGW, ODF monitoring) all reconcile normally — the
+// single-node fit comes from floored resource requests and emptied
+// placements, never from disabling features. The three hardware-validated
+// 4.22 deltas remain: count/replica (getMinimumNodes), non-empty no-op TSC
+// placements, and the Driver CR floors applied before this manifest.
 func RenderStorageCluster(pvcGi int) string {
 	return fmt.Sprintf(`apiVersion: ocs.openshift.io/v1
 kind: StorageCluster
@@ -289,15 +282,6 @@ metadata:
   name: ocs-storagecluster
   namespace: %[1]s
 spec:
-  monitoring:
-    reconcileStrategy: ignore
-  managedResources:
-    cephObjectStores:
-      reconcileStrategy: ignore
-    cephObjectStoreUsers:
-      reconcileStrategy: ignore
-  multiCloudGateway:
-    reconcileStrategy: ignore
   monPVCTemplate:
     spec:
       storageClassName: %[2]s

@@ -1362,7 +1362,7 @@ func TestValidateODFDefaults(t *testing.T) {
 	if err := mgr.Create(context.Background(), c); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if c.MasterCPUs != 8 || c.MasterRAM != 19456 || c.ODFDiskGB != 100 {
+	if c.MasterCPUs != 8 || c.MasterRAM != 24576 || c.ODFDiskGB != 100 {
 		t.Errorf("ODF floors not applied: cpus=%d ram=%d disk=%d", c.MasterCPUs, c.MasterRAM, c.ODFDiskGB)
 	}
 

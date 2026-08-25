@@ -25,7 +25,8 @@ func TestRenderStorageClusterSingleNodeDeltas(t *testing.T) {
 		"whenUnsatisfiable: ScheduleAnyway",
 		"storage: 30Gi",
 		"storageClassName: " + ImmediateStorageClassName,
-		"reconcileStrategy: ignore",
+		"noobaa-core:",
+		"rgw:",
 		"volumeMode: Block",
 	} {
 		if !strings.Contains(mc, want) {
@@ -34,6 +35,10 @@ func TestRenderStorageClusterSingleNodeDeltas(t *testing.T) {
 	}
 	if strings.Contains(mc, "replica: 3") {
 		t.Error("replica: 3 defeats SINGLE_NODE's node-count relaxation on ODF 4.22")
+	}
+	// Production features stay ON: resources are floored, never disabled.
+	if strings.Contains(mc, "reconcileStrategy: ignore") {
+		t.Error("no feature disables: NooBaa/RGW/ODF-monitoring must reconcile (floored, not ignored)")
 	}
 }
 

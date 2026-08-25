@@ -13,6 +13,16 @@ disk and an in-node LVMS thin pool. No loop devices, no hand-run `vgcreate`,
 no `modules-load.d` MachineConfig — OCP's CSI drivers load `rbd`/`ceph`
 themselves.
 
+## Trim, never disable
+
+The single-node fit comes exclusively from floored resource *requests*
+(components run with tiny reservations and burst into free memory) and
+emptied placements. Every ODF feature reconciles normally: NooBaa (object),
+Ceph RGW, CephFS, and ODF monitoring are all enabled. Developers lose
+production *infrastructure* (one node, one disk, no rack awareness), never
+production *features*. This is why the RAM floor is 24576 MiB — the full
+feature set, floored, needs ~19 GiB of requests plus burst headroom.
+
 ## The data disk and device-path scheme
 
 `stages/createmastervms` attaches a second, writable, per-cluster extra disk
@@ -129,14 +139,14 @@ deadlock a trim applied after the fact.
 ## Resource floors
 
 `app/manager.go`'s `validateNew` raises `MasterCPUs` to 8 and `MasterRAM` to
-19456 MiB whenever `--odf` is set and the user left them lower (logging the
+24576 MiB whenever `--odf` is set and the user left them lower (logging the
 bump); `create --master-cpus` (default 4) lets a user go higher up front. The
 floor is spike-validated, not a guess: 4 vCPU/16 GB is structurally
-insufficient (99% CPU requested before Ceph even starts). 8 vCPU/19456 MiB
+insufficient (99% CPU requested before Ceph even starts). 8 vCPU/24576 MiB
 converges at ~97% memory requested with all the trims above applied — there
 is effectively no headroom left in that configuration. That's a floor, not
 a ceiling: a bigger `--master-ram` scales the same way it does without
-`--odf` — a 20 GB+ master VM needs a 28 GB+ host, since the 19456 MiB floor
+`--odf` — a bigger master VM needs a proportionally bigger host, since the 24576 MiB floor
 already assumes almost no free host memory beyond the VM itself.
 
 ## Capacity math

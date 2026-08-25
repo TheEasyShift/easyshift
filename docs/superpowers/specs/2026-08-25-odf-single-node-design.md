@@ -226,3 +226,17 @@ flips the phase to "run" on the dead VM; create must be given an explicit
 vfkit survives, leaving a running VM with no network; `start` on a running
 VM does not respawn a dead sidecar. Both are pre-existing macOS backend
 gaps, tracked in ROADMAP.md.
+
+## Policy revision (2026-08-25, post-merge of PR #19)
+
+Decision: **trim, never disable.** The shipped StorageCluster no longer sets
+any `reconcileStrategy: ignore` — NooBaa, Ceph RGW, and ODF monitoring all
+reconcile normally with the recipe's 125m/128Mi floors applied to their
+components. The single-node fit remains resource trims + emptied placements
+only. Consequence: the RAM floor rises from 19456 to 24576 MiB (requests grow
+~1.3 GiB and NooBaa's real usage runs 1.5–2 GiB above its floors), which
+means `--odf` no longer fits a 24 GB host; validated targets are a 36 GB
+macOS host and larger Linux hosts. Insights stays enabled (the disable
+applied to cluster `odfy` during debugging was a one-off, not product
+behavior). The earlier ROADMAP idea of `--odf-profile` remains the future
+home for both a smaller dev tier and ODF's native lean/balanced profiles.
