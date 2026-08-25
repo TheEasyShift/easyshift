@@ -16,6 +16,7 @@ import (
 	"github.com/TheEasyShift/easyshift/providers/host"
 	"github.com/TheEasyShift/easyshift/providers/libvirt"
 	"github.com/TheEasyShift/easyshift/providers/localca"
+	"github.com/TheEasyShift/easyshift/providers/odf"
 	"github.com/TheEasyShift/easyshift/providers/openshift"
 	"github.com/TheEasyShift/easyshift/providers/redhat"
 	"github.com/TheEasyShift/easyshift/providers/tls"
@@ -53,6 +54,7 @@ func baseDeps(cfg *config.Config, hostIP string) (interfaces.Deps, interfaces.Co
 		Download:   dl,
 		Installer:  openshift.NewOpenShiftInstaller(cmd),
 		ImageBaker: openshift.NewOpenShiftImageBaker(cmd),
+		ODF:        odf.New(cmd),
 		Files:      files,
 		CSR:        csr.NewOCCSRApprover(cmd),
 		Hostname:   host.NewSSHHostnameInjector(cmd),

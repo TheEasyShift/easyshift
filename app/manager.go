@@ -29,6 +29,7 @@ import (
 	"github.com/TheEasyShift/easyshift/stages/finalize"
 	"github.com/TheEasyShift/easyshift/stages/generateignition"
 	"github.com/TheEasyShift/easyshift/stages/generatesshkey"
+	"github.com/TheEasyShift/easyshift/stages/installodf"
 	"github.com/TheEasyShift/easyshift/stages/mergekubeconfig"
 	"github.com/TheEasyShift/easyshift/stages/publishpxeassets"
 	"github.com/TheEasyShift/easyshift/stages/registercluster"
@@ -91,6 +92,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 		waitforinstall.New(d.Installer, d.CSR, d.Hostname, d.VM),
 		applytlscerts.New(d.NewCertIssuer, d.NewLocalCertIssuer, d.Cmd),
 		mergekubeconfig.New(d.Cmd),
+		installodf.New(d.ODF),
 		finalize.New(),
 	}
 }

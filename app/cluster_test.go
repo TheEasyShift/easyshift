@@ -151,6 +151,11 @@ func TestCreateCluster_NoBakeByDefault(t *testing.T) {
 	if len(bundle.VM.Created) == 1 && len(bundle.VM.Created[0].ExtraDisks) != 0 {
 		t.Errorf("master should have no extra disks without --bake-images")
 	}
+	// A plain cluster did not opt into --odf: the install-odf stage must be a
+	// no-op.
+	if len(bundle.ODF.Sequence) != 0 {
+		t.Errorf("expected no ODF phases without --odf, got %v", bundle.ODF.Sequence)
+	}
 }
 
 // TestCreateCluster_ODFDataDisk asserts the master gets a writable data disk
@@ -175,6 +180,10 @@ func TestCreateCluster_ODFDataDisk(t *testing.T) {
 	}
 	if len(bundle.VM.CreatedDataDisks) != 1 {
 		t.Errorf("CreateDataDisk calls: got %d want 1", len(bundle.VM.CreatedDataDisks))
+	}
+	// The install-odf stage must actually run during create.
+	if len(bundle.ODF.Sequence) == 0 {
+		t.Error("expected the install-odf stage to invoke the ODF installer")
 	}
 }
 
@@ -282,6 +291,7 @@ func TestCreateCluster_HappyPath(t *testing.T) {
 		"wait-for-install",
 		"apply-tls-certs",
 		"merge-kubeconfig",
+		"install-odf",
 		"finalize",
 	}
 	if got, want := len(state.Stages), len(wantStages); got != want {
