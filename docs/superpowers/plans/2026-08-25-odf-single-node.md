@@ -570,7 +570,7 @@ func (s *Stage) spec(sc *interfaces.StageContext) interfaces.ODFSpec {
 
 ### Task 9: Hardware validation
 
-- [ ] **Step 1:** Free resources: `easyshift delete baked` (it currently holds hand-edited spec + spike leftovers; ~200 GB of sparse files). Keep the imagestore cache.
-- [ ] **Step 2:** `./easyshift create -n odfy --odf --master-disk 60` (no bake: also validates the `/dev/vdb` path). Expect ~25 min to cluster + ~20-30 min to StorageCluster Ready.
-- [ ] **Step 3:** Acceptance: `oc get storagecluster -n openshift-storage` Ready; `oc get cephcluster` HEALTH_OK; both SCs exist; a 1Gi PVC on `ocs-storagecluster-ceph-rbd` + pod writes a file (the spike's `odf-write-test` manifest); `easyshift stop/start odfy` and re-check Ceph health (validates device-path stability across reboots).
-- [ ] **Step 4:** Record results in the spec (new "Implementation validation" section) and tick this plan. Commit.
+- [x] **Step 1:** Free resources: `easyshift delete baked` (it currently holds hand-edited spec + spike leftovers; ~200 GB of sparse files). Keep the imagestore cache.
+- [x] **Step 2:** `./easyshift create -n odfy --odf --master-disk 60` (no bake: also validates the `/dev/vdb` path). Expect ~25 min to cluster + ~20-30 min to StorageCluster Ready.
+- [x] **Step 3:** Acceptance: `oc get storagecluster -n openshift-storage` Ready; `oc get cephcluster` HEALTH_OK; both SCs exist; a 1Gi PVC on `ocs-storagecluster-ceph-rbd` + pod writes a file (the spike's `odf-write-test` manifest); `easyshift stop/start odfy` and re-check Ceph health (validates device-path stability across reboots).
+- [x] **Step 4:** Record results in the spec (new "Implementation validation" section) and tick this plan. Commit.

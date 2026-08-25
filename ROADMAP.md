@@ -82,6 +82,12 @@ See [docs/dev/odf.md](docs/dev/odf.md) and
 
 ## Later phases (per project vision)
 
+- [ ] `--master-ram` default (32768) exceeds the Virtualization.framework cap
+      on small hosts (vfkit crash-loops; the install watchdog then flips a
+      dead install VM to the run phase) — host-RAM-aware cap or preflight.
+- [ ] vmnet-helper sidecar dies with the invoking process group while vfkit
+      survives (VM left networkless); `start` on a running VM should detect
+      and respawn a dead sidecar.
 - [ ] Worker nodes (`addnode`) — CLI surface exists (`--workers` must be 0
       today).
 - [ ] Linux distro coverage beyond the current dev targets; keep mac + Linux
