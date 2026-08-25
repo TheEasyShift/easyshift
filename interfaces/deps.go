@@ -12,6 +12,7 @@ type Deps struct {
 	Net        NetworkProvisioner
 	Installer  Installer
 	ImageBaker ImageBaker
+	ODF        ODFInstaller
 	Files      FileServer
 	CSR        CSRApprover
 	Hostname   HostnameInjector

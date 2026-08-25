@@ -347,6 +347,25 @@ type DeviceAuthPrompt struct {
 	UserCode        string
 }
 
+// ODFSpec carries everything the ODF installer needs for one cluster.
+type ODFSpec struct {
+	KubeconfigPath string
+	OCBinaryPath   string
+	WorkDir        string // cluster dir; rendered manifests are written under <WorkDir>/odf/
+	Channel        string // e.g. "stable-4.22"
+	DevicePath     string // /dev/vdb, or /dev/vdc with --bake-images
+	DataPVCSizeGi  int    // per-OSD PVC request
+}
+
+// ODFInstaller drives the four ODF phases. Each call is idempotent and
+// blocks until its phase is complete (or its internal timeout fires).
+type ODFInstaller interface {
+	InstallOperators(ctx context.Context, spec ODFSpec) error     // LVMS + ODF subs; waits CSVs + StorageCluster CRD
+	SetupLVM(ctx context.Context, spec ODFSpec) error             // LVMCluster (waits Ready) + Immediate StorageClass
+	EnableSingleNode(ctx context.Context, spec ODFSpec) error     // SINGLE_NODE patch + settle, node label, Driver CRs, monitoring trim
+	CreateStorageCluster(ctx context.Context, spec ODFSpec) error // StorageCluster; waits Ready + both ceph StorageClasses
+}
+
 // PullSecretFetcher obtains the user's OpenShift pull secret from their
 // Red Hat account via the OAuth 2.0 device authorization grant. Call
 // StartDeviceAuth, show the returned prompt, then WaitAndFetch, which blocks
