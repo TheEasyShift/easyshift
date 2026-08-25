@@ -56,8 +56,10 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 		return fmt.Errorf("query disk space at %s: %w", sc.Config.ConfigDir, err)
 	}
 	need := uint64(sc.Cluster.MasterDiskGB) * 1024 * 1024 * 1024
-	// Baking attaches a per-cluster copy of the store qcow2; count it.
-	if sc.Cluster.BakeImages {
+	// Baking attaches a per-cluster copy of the store disk; count it — except
+	// on macOS, where ImportDisk APFS-clones the cached image and the copy
+	// costs no space until modified (it never is: the guest mounts it ro).
+	if sc.Cluster.BakeImages && runtime.GOOS != "darwin" {
 		if fi, err := os.Stat(config.ImageStoreDiskPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
 			need += uint64(fi.Size())
 		}
