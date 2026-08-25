@@ -135,3 +135,58 @@ command ever exists; that feature would inherit it
 - **Device naming**: virtio disk order → `/dev/vdX` assumed stable across
   reboots on both backends (single controller, fixed attach order). Verified
   during the spike.
+
+## Spike results (2026-08-25, `baked` cluster, OCP 4.22.9 / ODF 4.22.2 / LVMS 4.22.0)
+
+Full stack reached StorageCluster `Ready` + `HEALTH_OK`, 3 OSDs, RBD and
+CephFS StorageClasses, and a PVC write test succeeded. Pinned facts:
+
+- Device path: third virtio disk = `/dev/vdc` with `--bake-images`, `/dev/vdb`
+  without. Attach order is stable across reboots.
+- Operators: both `lvms-operator` and `odf-operator` in `redhat-operators`,
+  channel `stable-4.22`; namespaces `openshift-lvm-storage` /
+  `openshift-storage`. `odf-operator` spawns ~11 dependent subscriptions; the
+  stage must wait for the `ocs-operator` CSV (`Succeeded`) and the
+  `storageclusters.ocs.openshift.io` CRD, not just the odf-operator CSV. The
+  ocs subscription's metadata.name is
+  `ocs-operator-stable-4.22-redhat-operators-openshift-marketplace` — find it
+  by `spec.name`.
+- `LVMCluster` (`lvm.topolvm.io/v1alpha1`) with a thin-pool deviceClass on the
+  device path reaches `status.state: Ready` in ~2 min and builds VG+thin pool
+  in-node. The Immediate SC (`topolvm.io`, `topolvm.io/device-class` param)
+  provisions mon/OSD PVCs correctly.
+- `SINGLE_NODE=true` env (read via `util.IsSingleNodeDeployment`) works, BUT
+  three recipe deltas are REQUIRED on ODF 4.22:
+  1. Device set must be `count: 3, replica: 1` (not `replica: 3`):
+     `getMinimumNodes` takes `max(deviceSet.replica)` AFTER the SINGLE_NODE
+     relaxation, so `replica: 3` re-raises the node requirement to 3.
+  2. Empty placements don't work for OSDs: deviceSet `placement: {}` is
+     ignored (`isPlacementEmpty` → defaults win), and the default renders a
+     TopologySpreadConstraint from the failure-domain key, which is EMPTY in
+     SINGLE_NODE mode (`failureDomain=osd` has no key) → osd-prepare Jobs are
+     invalid ("topologyKey: Required value"). Setting `spec.placement.osd: {}`
+     at the StorageCluster level would panic the operator
+     (`TopologySpreadConstraints[0]` on an empty default). The fix: give the
+     deviceSet non-empty `placement` AND `preparePlacement`, each with a
+     valid no-op TSC (`topologyKey: kubernetes.io/hostname`,
+     `whenUnsatisfiable: ScheduleAnyway`, maxSkew 1, labelSelector
+     `ceph.rook.io/pvc Exists`) — `mergePlacements` substitutes it wholesale.
+  3. The CephCSI `Driver` CRs must floor ALL controller containers, not just
+     the four sidecars: valid resource keys are `plugin` (default 250Mi!),
+     `omapGenerator` (125Mi), `addons`, `liveness`, `logRotator`, `attacher`,
+     `provisioner`, `resizer`, `snapshotter`. Trimmed values that work:
+     plugin 100Mi/50m, sidecars 50Mi/25m, omapGenerator 50Mi/10m,
+     addons 32Mi/10m. These must be applied BEFORE the StorageCluster: the
+     csi-operator (`ceph-csi-controller-manager`) can itself become
+     unschedulable on a full node, deadlocking the trim it would apply.
+- StorageCluster `Ready` is not the end: the RBD/CephFS StorageClasses are
+  created asynchronously by ocs-client-operator (StorageClient `Connected`).
+  The stage must wait for the two SCs (`ocs-storagecluster-ceph-rbd`,
+  `ocs-storagecluster-cephfs`) explicitly.
+- Resources: 4 vCPU/16 GB is structurally insufficient (99% CPU requested
+  before Ceph starts). Working configuration: **8 vCPUs, 19456 MiB** → 97%
+  memory requested with the trims above. A cluster-monitoring-config trim
+  (prometheus 300Mi etc.) is part of the fit. Host note: a 20 GB VM thrashes
+  a 24 GB Mac into a load-300 death spiral; 19 GB is the ceiling there.
+- Timeouts observed: CSVs ≤ 10 min, LVMCluster ≤ 2 min, StorageCluster
+  Ready 15–45 min (budget 30 min on a right-sized VM), SCs + a few min.
