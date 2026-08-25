@@ -117,10 +117,19 @@ func (i *OpenShiftInstaller) WriteInstallConfig(_ context.Context, spec interfac
 	return nil
 }
 
-// CreateIgnitionConfigs runs `openshift-install create ignition-configs`.
-func (i *OpenShiftInstaller) CreateIgnitionConfigs(ctx context.Context, spec interfaces.InstallerSpec) error {
+// CreateManifests runs `openshift-install create manifests`. See the
+// interface doc: this must precede writing extra manifests into openshift/.
+func (i *OpenShiftInstaller) CreateManifests(ctx context.Context, spec interfaces.InstallerSpec) error {
 	if _, err := i.cmd.Run(ctx, spec.InstallerPath, "create", "manifests", "--dir", spec.ClusterDir); err != nil {
 		return fmt.Errorf("create manifests: %w", err)
+	}
+	return nil
+}
+
+// CreateIgnitionConfigs runs `openshift-install create ignition-configs`.
+func (i *OpenShiftInstaller) CreateIgnitionConfigs(ctx context.Context, spec interfaces.InstallerSpec) error {
+	if err := i.CreateManifests(ctx, spec); err != nil {
+		return err
 	}
 	if _, err := i.cmd.Run(ctx, spec.InstallerPath, "create", "ignition-configs", "--dir", spec.ClusterDir); err != nil {
 		return fmt.Errorf("create ignition-configs: %w", err)

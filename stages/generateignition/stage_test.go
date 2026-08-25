@@ -22,7 +22,7 @@ func TestApplyWritesRosettaManifestOnDarwin(t *testing.T) {
 	}
 	cfgDir := t.TempDir()
 	cfg := &config.Config{ConfigDir: cfgDir}
-	c := &config.ClusterConfig{Name: "t", NetworkMode: config.NetworkModeNAT}
+	c := &config.ClusterConfig{Name: "t", NetworkMode: config.NetworkModeNAT, BakeImages: true}
 	sc := &interfaces.StageContext{Config: cfg, Cluster: c}
 	if err := os.MkdirAll(sc.ClusterDir(), 0o755); err != nil {
 		t.Fatal(err)
@@ -41,5 +41,24 @@ func TestApplyWritesRosettaManifestOnDarwin(t *testing.T) {
 	}
 	if !inst.WroteRosettaManifest {
 		t.Error("expected WriteRosettaManifest to be called on darwin")
+	}
+	// openshift-install only renders pre-dropped openshift/ manifests into the
+	// ignition when `create manifests` ran first (validated on hardware —
+	// without it the extra MachineConfigs are silently ignored). So the order
+	// must be: CreateManifests, then the manifest writes, then the ignition.
+	assertOrder(t, inst.Sequence, "CreateManifests", "WriteRosettaManifest", "CreateSingleNodeIgnition")
+	assertOrder(t, inst.Sequence, "CreateManifests", "WriteImageStoreManifest", "CreateSingleNodeIgnition")
+}
+
+func assertOrder(t *testing.T, seq []string, want ...string) {
+	t.Helper()
+	i := 0
+	for _, s := range seq {
+		if i < len(want) && s == want[i] {
+			i++
+		}
+	}
+	if i != len(want) {
+		t.Errorf("call order %v does not contain %v in order", seq, want)
 	}
 }

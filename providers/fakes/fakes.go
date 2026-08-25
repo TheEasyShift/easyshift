@@ -321,6 +321,7 @@ func (n *NetworkProvisioner) ResetNetwork(_ context.Context, network string) err
 type Installer struct {
 	mu                       sync.Mutex
 	WroteInstallConfig       bool
+	CreatedManifests         bool
 	CreatedIgnitions         bool
 	CreatedSingleNodeIgn     bool
 	WroteRosettaManifest     bool
@@ -341,16 +342,31 @@ type Installer struct {
 	// LiveISOURL overrides the URL returned by CoreOSLiveISOURL.
 	LiveISOURL string
 	Err        error
+	// Sequence records method names in call order, for ordering assertions
+	// (e.g. CreateManifests must precede the manifest writes).
+	Sequence []string
 }
 
 func (i *Installer) record(spec interfaces.InstallerSpec) {
 	i.LastSpec = spec
 }
 
+func (i *Installer) step(name string) { i.Sequence = append(i.Sequence, name) }
+
 func (i *Installer) WriteInstallConfig(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.step("WriteInstallConfig")
 	i.WroteInstallConfig = true
+	i.record(spec)
+	return i.Err
+}
+
+func (i *Installer) CreateManifests(_ context.Context, spec interfaces.InstallerSpec) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.step("CreateManifests")
+	i.CreatedManifests = true
 	i.record(spec)
 	return i.Err
 }
@@ -358,6 +374,7 @@ func (i *Installer) WriteInstallConfig(_ context.Context, spec interfaces.Instal
 func (i *Installer) CreateIgnitionConfigs(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.step("CreateIgnitionConfigs")
 	i.CreatedIgnitions = true
 	i.record(spec)
 	return i.Err
@@ -366,6 +383,7 @@ func (i *Installer) CreateIgnitionConfigs(_ context.Context, spec interfaces.Ins
 func (i *Installer) WriteRosettaManifest(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.step("WriteRosettaManifest")
 	i.WroteRosettaManifest = true
 	i.record(spec)
 	return i.Err
@@ -374,6 +392,7 @@ func (i *Installer) WriteRosettaManifest(_ context.Context, spec interfaces.Inst
 func (i *Installer) WriteImageStoreManifest(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.step("WriteImageStoreManifest")
 	i.WroteImageStoreManifest = true
 	i.record(spec)
 	return i.Err
@@ -382,6 +401,7 @@ func (i *Installer) WriteImageStoreManifest(_ context.Context, spec interfaces.I
 func (i *Installer) CreateSingleNodeIgnition(_ context.Context, spec interfaces.InstallerSpec) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	i.step("CreateSingleNodeIgnition")
 	i.CreatedSingleNodeIgn = true
 	i.record(spec)
 	if i.Err != nil {
