@@ -353,11 +353,12 @@ func (m *VMManager) Stop(_ context.Context, name string) error {
 }
 
 // Delete stops the VM and removes its state dir, plus the imported
-// image-store copy (which lives beside — not inside — the VM dir because
-// ImportDisk runs before Create).
+// image-store copy and ODF data disk (both live beside — not inside — the VM
+// dir because ImportDisk/CreateDataDisk run before Create).
 func (m *VMManager) Delete(ctx context.Context, name string) error {
 	_ = m.Stop(ctx, name)
 	_ = os.Remove(filepath.Join(m.stateDir, config.ImageStoreVolName(name)))
+	_ = os.Remove(filepath.Join(m.stateDir, config.ODFVolName(name)))
 	return os.RemoveAll(m.vmDir(name))
 }
 
@@ -385,6 +386,19 @@ func (m *VMManager) ImportDisk(_ context.Context, _, volName, localPath string) 
 		if copyErr := copyFile(localPath, dst); copyErr != nil {
 			return "", fmt.Errorf("vfkit: import disk: clone failed (%v: %s) and copy failed: %w", err, strings.TrimSpace(string(out)), copyErr)
 		}
+	}
+	return dst, nil
+}
+
+// CreateDataDisk creates (or reuses) a sparse raw disk in the state dir for
+// the ODF data disk ("pool" has no vfkit meaning). Unlike ImportDisk, an
+// existing disk of this name is reused rather than overwritten — it holds
+// persistent state across resumed installs. The disk is removed by Delete of
+// the VM whose name volName embeds (config.ODFVolName).
+func (m *VMManager) CreateDataDisk(_ context.Context, _, volName string, sizeGiB int) (string, error) {
+	dst := filepath.Join(m.stateDir, volName)
+	if err := m.createDisk(dst, sizeGiB); err != nil {
+		return "", err
 	}
 	return dst, nil
 }

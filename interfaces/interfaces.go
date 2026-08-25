@@ -74,6 +74,11 @@ type VMManager interface {
 	// as volName (format qcow2) and returns the pool volume path for use as an
 	// ExtraDisk. Used for the baked image-store disk.
 	ImportDisk(ctx context.Context, pool, volName, localPath string) (string, error)
+	// CreateDataDisk creates an empty, sparse, writable per-cluster disk (the
+	// ODF backing device) named volName and returns its attachable path: a
+	// pool volume path on libvirt, a state-dir file on vfkit. Idempotent — an
+	// existing volume of that name is reused.
+	CreateDataDisk(ctx context.Context, pool, volName string, sizeGiB int) (string, error)
 	// RemoveISO deletes a volume previously created by ImportISO.
 	RemoveISO(ctx context.Context, pool, volName string) error
 	// CheckAccess probes that the libvirt endpoint is reachable (libvirtd up,
