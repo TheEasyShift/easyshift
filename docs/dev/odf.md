@@ -134,14 +134,20 @@ bump); `create --master-cpus` (default 4) lets a user go higher up front. The
 floor is spike-validated, not a guess: 4 vCPU/16 GB is structurally
 insufficient (99% CPU requested before Ceph even starts). 8 vCPU/19456 MiB
 converges at ~97% memory requested with all the trims above applied — there
-is effectively no headroom left in that configuration.
+is effectively no headroom left in that configuration. That's a floor, not
+a ceiling: a bigger `--master-ram` scales the same way it does without
+`--odf` — a 20 GB+ master VM needs a 28 GB+ host, since the 19456 MiB floor
+already assumes almost no free host memory beyond the VM itself.
 
 ## Capacity math
 
 Usable Ceph capacity is roughly `ODFDiskGB / 3` — three OSDs share the one
 data disk, so PV-visible space is about a third of the disk regardless of
 replica count (replica 1 here is a single copy per OSD, not 3x
-duplication — see the redundancy caveat below). The per-OSD
+duplication — all three OSDs still sit on the same physical disk, so this
+buys none of Ceph's usual hardware redundancy: losing that one disk loses
+everything, the same caveat [docs/user/usage.md](../user/usage.md) makes for
+users). The per-OSD
 `dataPVCTemplate` request the stage computes
 (`stages/installodf/stage.go`'s `spec()`) is `ODFDiskGB/3 - 3` Gi: the `-3`
 leaves room in the same thin pool for the 2Gi mon PVC and thin-pool metadata
