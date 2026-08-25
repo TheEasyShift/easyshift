@@ -68,6 +68,19 @@ func ODFVolName(name string) string {
 	return "easyshift-" + name + "-odf." + imageStoreDiskExt()
 }
 
+// OLMChannelForVersion derives the OLM subscription channel for the operators
+// --odf installs (lvms-operator, odf-operator) from the cluster's OCP
+// version: "stable-<major>.<minor>", e.g. "4.22.9" or "4.22" -> "stable-4.22".
+// Lives in config (not providers/odf) because the create stage that bumps
+// MasterCPUs/MasterRAM for --odf cannot import providers.
+func OLMChannelForVersion(v string) string {
+	parts := strings.Split(v, ".")
+	if len(parts) < 2 {
+		return "stable-" + v
+	}
+	return "stable-" + strings.Join(parts[:2], ".")
+}
+
 func imageStoreDiskExt() string {
 	if runtime.GOOS == "darwin" {
 		return "img"
