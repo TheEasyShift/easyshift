@@ -28,8 +28,10 @@ offline-install roadmap item notes the conflict).
 - Usable capacity ≈ `ODFDiskGB/3 - overhead`; the per-OSD `dataPVCTemplate`
   request is `(ODFDiskGB/3) - 3` Gi (mon PVCs and thin-pool metadata come out
   of the same pool). Documented, not user-tunable.
-- Preflight warning (not an error) when `MasterRAM < 16384`: the floored
-  requests schedule, but Ceph below 16 GB thrashes.
+- Resource floors (spike-validated): `--odf` requires 8 vCPUs and 19456 MiB
+  master RAM. The manager raises `MasterCPUs` to 8 and `MasterRAM` to 19456
+  when `--odf` is set and the user left them lower, logging the bump;
+  `create` also gains `--master-cpus` (default 4) so users can go higher.
 
 ## Storage backend: VM data disk + LVMS
 
@@ -84,16 +86,26 @@ Ordered steps (recipe ordering, each wait-bounded):
    (`--overwrite`).
 5. **CephCSI `Driver` CRs** (`csi.ceph.io/v1`) for
    `openshift-storage.rbd.csi.ceph.com` and
-   `openshift-storage.cephfs.csi.ceph.com`: `controllerPlugin.replicas: 1`,
-   ~50m/100Mi sidecars. Applied unconditionally — easyshift's floor is OCP
-   4.22, so ODF ≥ 4.19 always.
-6. **Trimmed StorageCluster** exactly as the recipe renders it —
-   monitoring/cephObjectStores/cephObjectStoreUsers/multiCloudGateway
-   `reconcileStrategy: ignore`, every placement emptied (including the device
-   set), every component request floored at 125m/128Mi, `monPVCTemplate` 2Gi
-   on the Immediate SC, one `storageDeviceSet` `count: 1, replica: 3,
-   portable: false`, block-mode `dataPVCTemplate` on the Immediate SC — with
-   the derived size. Wait for `StorageCluster` phase `Ready` (timeout ~20 min).
+   `openshift-storage.cephfs.csi.ceph.com`: `controllerPlugin.replicas: 1`
+   and floors for ALL controller containers (plugin 100Mi/50m, sidecars
+   50Mi/25m each, omapGenerator 50Mi/10m, addons 32Mi/10m — see spike
+   results; the defaults total ~900Mi per controller pod). Applied
+   unconditionally and BEFORE the StorageCluster, so the CSI pods are born
+   small (mid-flight trims can deadlock: the csi-operator itself becomes
+   unschedulable on a full node). A `cluster-monitoring-config` trim
+   (prometheus 300Mi/4h retention, other components ~50Mi) is applied in the
+   same step.
+6. **Trimmed StorageCluster** — the recipe with three 4.22 deltas (see spike
+   results): monitoring/cephObjectStores/cephObjectStoreUsers/multiCloudGateway
+   `reconcileStrategy: ignore`; component placements (mon/mds/mgr/…) emptied;
+   component requests floored at 125m/128Mi; `monPVCTemplate` 2Gi on the
+   Immediate SC; one `storageDeviceSet` with **`count: 3, replica: 1`**,
+   `portable: false`, block-mode `dataPVCTemplate` with the derived size, and
+   non-empty `placement` + `preparePlacement` carrying the no-op
+   TopologySpreadConstraint (`kubernetes.io/hostname`, `ScheduleAnyway`).
+   Wait for `StorageCluster` phase `Ready` (timeout 30 min), then for the
+   `ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs`
+   StorageClasses (created asynchronously by ocs-client-operator).
 
 Rollback: no-op (with comment). Justification: (a) the runner invokes
 Rollback only on `easyshift delete` (failed creates resume, they don't roll
@@ -124,8 +136,9 @@ command ever exists; that feature would inherit it
 
 ## Risks / open items
 
-- **Memory**: ODF on a 16 GB SNO is tight even floored; the preflight warning
-  plus docs recommend 20 GB+ where the host allows.
+- **Memory**: 8 vCPU / 19456 MiB is the validated floor (97% memory
+  requested). A 24 GB host is the practical minimum and has zero headroom;
+  docs say so plainly. 20 GB+ VMs need a 28 GB+ host.
 - **Catalog dependency**: requires the default OperatorHub catalogs (online).
   The offline-install roadmap item disables exactly those; if both features
   are wanted together later, the catalogs must be mirrored into the bake.
