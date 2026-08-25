@@ -535,6 +535,40 @@ func (b *ImageBaker) Bake(_ context.Context, spec interfaces.BakeSpec) error {
 	return nil
 }
 
+// ODFInstaller is a fake interfaces.ODFInstaller. Sequence records method
+// names in call order (pattern: fake Installer), so tests can assert the
+// four ODF phases ran in order.
+type ODFInstaller struct {
+	mu       sync.Mutex
+	Sequence []string
+	LastSpec interfaces.ODFSpec
+	Err      error
+}
+
+func (o *ODFInstaller) step(name string, spec interfaces.ODFSpec) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.Sequence = append(o.Sequence, name)
+	o.LastSpec = spec
+	return o.Err
+}
+
+func (o *ODFInstaller) InstallOperators(_ context.Context, spec interfaces.ODFSpec) error {
+	return o.step("InstallOperators", spec)
+}
+
+func (o *ODFInstaller) SetupLVM(_ context.Context, spec interfaces.ODFSpec) error {
+	return o.step("SetupLVM", spec)
+}
+
+func (o *ODFInstaller) EnableSingleNode(_ context.Context, spec interfaces.ODFSpec) error {
+	return o.step("EnableSingleNode", spec)
+}
+
+func (o *ODFInstaller) CreateStorageCluster(_ context.Context, spec interfaces.ODFSpec) error {
+	return o.step("CreateStorageCluster", spec)
+}
+
 // FileServer is a fake interfaces.FileServer.
 type FileServer struct {
 	mu      sync.Mutex
@@ -886,6 +920,7 @@ func All() (interfaces.Deps, *Bundle) {
 		Net:             &NetworkProvisioner{},
 		Installer:       &Installer{},
 		ImageBaker:      &ImageBaker{},
+		ODF:             &ODFInstaller{},
 		Files:           &FileServer{Root: fakeHTTPRoot(), URL: "http://fake:9393"},
 		CSR:             &CSRApprover{},
 		Hostname:        &HostnameInjector{},
@@ -904,6 +939,7 @@ func All() (interfaces.Deps, *Bundle) {
 		Net:        b.Net,
 		Installer:  b.Installer,
 		ImageBaker: b.ImageBaker,
+		ODF:        b.ODF,
 		Files:      b.Files,
 		CSR:        b.CSR,
 		Hostname:   b.Hostname,
@@ -1041,6 +1077,13 @@ func (b *Bundle) WriteTrace(w io.Writer) {
 		}
 	}
 
+	if len(b.ODF.Sequence) > 0 {
+		fmt.Fprintf(w, "\nODF phases invoked:\n")
+		for _, name := range b.ODF.Sequence {
+			fmt.Fprintf(w, "  - %s\n", name)
+		}
+	}
+
 	if b.CSR.WasStarted() {
 		fmt.Fprintln(w, "\nCSR approver: launched (oc path:", b.CSR.LastOCPath+")")
 	}
@@ -1075,6 +1118,7 @@ type Bundle struct {
 	Net             *NetworkProvisioner
 	Installer       *Installer
 	ImageBaker      *ImageBaker
+	ODF             *ODFInstaller
 	Files           *FileServer
 	CSR             *CSRApprover
 	Hostname        *HostnameInjector
