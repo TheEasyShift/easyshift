@@ -183,3 +183,26 @@ func TestImportDiskAndDeleteCleanup(t *testing.T) {
 		t.Errorf("imported disk %q survived Delete", got)
 	}
 }
+
+func TestCreateDataDiskAndDeleteCleanup(t *testing.T) {
+	m := newMgr(t)
+	vol := config.ODFVolName("master-0-demo")
+	got, err := m.CreateDataDisk(context.Background(), "ignored-pool", vol, 2)
+	if err != nil {
+		t.Fatalf("CreateDataDisk: %v", err)
+	}
+	fi, err := os.Stat(got)
+	if err != nil || fi.Size() != 2<<30 {
+		t.Fatalf("data disk wrong: %v size=%d", err, fi.Size())
+	}
+	// Idempotent: second call reuses, does not truncate away content.
+	if again, err := m.CreateDataDisk(context.Background(), "p", vol, 2); err != nil || again != got {
+		t.Fatalf("CreateDataDisk not idempotent: %q vs %q (%v)", again, got, err)
+	}
+	if err := m.Delete(context.Background(), "master-0-demo"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(got); !os.IsNotExist(err) {
+		t.Errorf("data disk %q survived Delete", got)
+	}
+}

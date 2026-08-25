@@ -211,6 +211,26 @@ func (m *LibvirtVMManager) ImportDisk(ctx context.Context, pool, volName, localP
 	return strings.TrimSpace(string(out)), nil
 }
 
+// CreateDataDisk creates (or reuses) a sparse qcow2 volume in the pool for
+// the ODF data disk. Unlike ImportDisk, an existing volume of this name is
+// reused rather than dropped and recreated — this disk holds persistent state
+// across resumed installs.
+func (m *LibvirtVMManager) CreateDataDisk(ctx context.Context, pool, volName string, sizeGiB int) (string, error) {
+	// Reuse if present (resume/idempotency): recreating would destroy data.
+	if out, err := m.virsh(ctx, "vol-path", "--pool", pool, volName); err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	if _, err := m.virsh(ctx, "vol-create-as", pool, volName,
+		fmt.Sprintf("%dG", sizeGiB), "--format", "qcow2"); err != nil {
+		return "", fmt.Errorf("create data disk volume %s: %w", volName, err)
+	}
+	out, err := m.virsh(ctx, "vol-path", "--pool", pool, volName)
+	if err != nil {
+		return "", fmt.Errorf("resolve data disk path %s: %w", volName, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RemoveISO deletes a volume created by ImportISO. Missing volumes are not
 // an error (best-effort cleanup during rollback).
 func (m *LibvirtVMManager) RemoveISO(ctx context.Context, pool, volName string) error {

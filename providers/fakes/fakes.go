@@ -134,16 +134,17 @@ func (d *Downloader) Download(_ context.Context, url, destPath string) error {
 // VMManager is a fake interfaces.VMManager. Created VMs are tracked in Created
 // and considered running until Stop/Delete is called.
 type VMManager struct {
-	mu            sync.Mutex
-	Created       []interfaces.VMSpec
-	Started       []string
-	Stopped       []string
-	Deleted       []string
-	ImportedISOs  []string // volNames passed to ImportISO
-	ImportedDisks []string // volNames passed to ImportDisk
-	RemovedISOs   []string // volNames passed to RemoveISO
-	running       map[string]bool
-	Err           error
+	mu               sync.Mutex
+	Created          []interfaces.VMSpec
+	Started          []string
+	Stopped          []string
+	Deleted          []string
+	ImportedISOs     []string // volNames passed to ImportISO
+	ImportedDisks    []string // volNames passed to ImportDisk
+	CreatedDataDisks []string // volNames passed to CreateDataDisk
+	RemovedISOs      []string // volNames passed to RemoveISO
+	running          map[string]bool
+	Err              error
 	// CheckAccessErr, if set, is returned by CheckAccess (simulates libvirt
 	// being unreachable).
 	CheckAccessErr error
@@ -228,6 +229,17 @@ func (v *VMManager) ImportDisk(_ context.Context, _, volName, _ string) (string,
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.ImportedDisks = append(v.ImportedDisks, volName)
+	if v.Err != nil {
+		return "", v.Err
+	}
+	return "/var/lib/libvirt/images/" + volName, nil
+}
+
+// CreateDataDisk records volName and returns a deterministic fake pool path.
+func (v *VMManager) CreateDataDisk(_ context.Context, _, volName string, _ int) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.CreatedDataDisks = append(v.CreatedDataDisks, volName)
 	if v.Err != nil {
 		return "", v.Err
 	}
