@@ -49,6 +49,16 @@ drop-in replacing the unsupported `storage.conf.d` mechanism.
       (`--all`) copies — the spike store was aarch64-only.
 - [ ] **Linux-side validation**: the qcow2/virt-make-fs/libvirt-pool variant
       of the attach path has not run against a real Linux host.
+- [ ] **Offline installs** (the end-goal baking enables). Residual online
+      dependencies measured on hardware (2026-08-25): the three OLM catalog
+      indexes (fix: ship an OperatorHub disableAllDefaultSources manifest when
+      baking), the two insights-runtime images whose imagePullPolicy=Always
+      bypasses the store (fix: disable Insights, disconnected-style), and —
+      the real blocker — magic DNS: sslip.io names resolve via public
+      nameservers, so api/api-int/*.apps are unresolvable offline on both host
+      and node. Needs a local answer for the cluster domain (host dnsmasq /
+      hosts injection + node-side resolution) or a non-magic local domain
+      mode. Binaries + RHCOS are already cached per version.
 
 ## Later phases (per project vision)
 
