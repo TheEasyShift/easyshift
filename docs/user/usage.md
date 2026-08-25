@@ -63,6 +63,42 @@ Only `--name` is required. Key flags:
 | `--tls-email` | ACME account email; enables Let's Encrypt certs via DNS-01 (requires `--dns-provider`). |
 | `--tls-staging` | Use Let's Encrypt staging (untrusted certs, no rate limits) while iterating. |
 
+**Storage (`--odf`)**: installs [OpenShift Data Foundation](https://www.redhat.com/en/technologies/cloud-computing/openshift-data-foundation)
+(Ceph via Rook) onto the single master node. You get working RBD and CephFS
+`StorageClasses` backed by a dedicated VM data disk and an in-node LVMS thin
+pool — a real Ceph cluster reporting `HEALTH_OK`, not a shortcut.
+
+```sh
+easyshift create --name demo --odf                  # default 100 GB data disk
+easyshift create --name demo --odf --odf-disk 200    # bigger data disk
+```
+
+| Flag | Default | Notes |
+| --- | --- | --- |
+| `--odf` | off | Installs the storage stack after the cluster comes up. Requires the default OperatorHub catalogs (online) — OLM pulls `lvms-operator` and `odf-operator` from `redhat-operators`, so `--odf` won't work in an offline/disconnected setup. |
+| `--odf-disk` | 100 | Size in GB of the sparse backing data disk for Ceph. Requires `--odf`. |
+| `--master-cpus` | 4 | Master vCPUs; `--odf` raises this to 8 automatically if left lower. |
+
+**Capacity math**: usable Ceph capacity is roughly `--odf-disk / 3` — three
+OSDs share the one data disk, so PV-visible space works out to about a third
+of what you asked for, not the whole disk.
+
+**Resource floors**: `--odf` needs real headroom. It automatically raises
+the master to **8 vCPUs and 19456 MiB RAM** if your `--master-ram` /
+`--master-cpus` were lower (a log line tells you when it does). That floor
+is hardware-validated, not a guess, and it leaves essentially no slack —
+budget a **24 GB host as the practical minimum**, with zero headroom to
+spare once the VM, host OS, and everything else on the box are accounted
+for.
+
+**No hardware redundancy**: the StorageCluster is configured with three
+OSDs and `replica: 1` sharing the same single physical disk — Ceph-level
+replica semantics with zero actual hardware redundancy. Losing that one disk
+loses everything. This is a dev/test convenience, not a durability story.
+
+See [docs/dev/odf.md](../dev/odf.md) for the stage internals and the exact
+ODF 4.22 recipe deltas this is built on.
+
 ### `list` — show all clusters
 
 ```sh

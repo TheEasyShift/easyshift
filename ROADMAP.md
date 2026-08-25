@@ -60,6 +60,26 @@ drop-in replacing the unsupported `storage.conf.d` mechanism.
       hosts injection + node-side resolution) or a non-magic local domain
       mode. Binaries + RHCOS are already cached per version.
 
+## Storage (`--odf`) — day-2 and offline follow-ups
+
+See [docs/dev/odf.md](docs/dev/odf.md) and
+[docs/superpowers/specs/2026-08-25-odf-single-node-design.md](docs/superpowers/specs/2026-08-25-odf-single-node-design.md).
+
+- [ ] **`easyshift odf remove` (day-2, keep the cluster).** `install-odf`'s
+      `Rollback` is intentionally a no-op — it only runs during
+      `easyshift delete`, where the VM and both disks are destroyed moments
+      later anyway. A standalone command to strip ODF off a *running*
+      cluster without deleting it doesn't exist yet, and needs the recipe's
+      real finalizer-ordered teardown (StorageCluster → operators →
+      VG/disk) that the no-op rollback deliberately skips.
+- [ ] **`--odf` conflicts with the future offline-install mode.** `--odf`
+      installs `lvms-operator` and `odf-operator` from the default
+      `redhat-operators` OperatorHub catalog, which requires network access
+      to the catalog index. The offline-install roadmap item (see
+      "Offline installs" above) disables exactly those default catalogs;
+      the two features can't be combined until the catalog indexes ODF/LVMS
+      need are mirrored into the image bake.
+
 ## Later phases (per project vision)
 
 - [ ] Worker nodes (`addnode`) — CLI surface exists (`--workers` must be 0
