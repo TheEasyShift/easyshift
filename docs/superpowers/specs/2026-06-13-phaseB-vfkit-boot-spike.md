@@ -149,3 +149,42 @@ install/boot/network/IP-pin halves are done and committed.
 `/tmp/vfkit-spike/` holds `openshift-install` (4.22.0 mac-arm64),
 `rhcos-live.aarch64.iso`, `stream.json`. The exact working EFI invocation is in
 this doc's "What was tested".
+
+## Update 2026-08-25: Tasks 12–13 on-hardware results
+
+Hardware: Mac mini M4 Pro, 24 GB RAM, macOS 26.5.2. OCP 4.22.9, RHCOS 9.8.
+
+**Full convergence (fix A works).** A fresh `easyshift create` converged
+end-to-end in 29m10s: console-driven install→EFI transition, cluster
+Available, kubeconfig merged. Guest reboots under the EFI run phase (MCO
+rollouts) come back on the installed disk — no reboot loop. `easyshift
+stop`/`start` work on vfkit VMs.
+
+**Rosetta (Task 13 step 1) — validated, two findings.**
+
+1. The Phase A `RosettaButaneFragment` was never wired into any stage; the
+   vfkit `rosetta` device was attached but the guest had no mount/binfmt.
+   Replaced by a `99-master-rosetta` MachineConfig dropped into the install
+   dir's `openshift/` by generate-ignition (darwin only).
+2. SELinux: the virtiofs share is `unlabeled_t`, which `container_t` cannot
+   execute — confined amd64 containers SIGSEGV when the kernel maps the
+   pre-opened translator. Fix: mount the share with
+   `context=system_u:object_r:container_file_t:s0`. Must be set on the boot's
+   first mount (the kernel rejects a context differing from the live
+   superblock — retro-fitting on a running node needs a reboot).
+
+Verified on the installed node: `/proc/sys/fs/binfmt_misc/rosetta` enabled
+(magic `7f454c46...02003e00`, flags OCF), confined
+`podman run --arch amd64 … uname -m` → `x86_64`, and a kubelet-scheduled
+digest-pinned amd64 pod (`oc run`) → `x86_64`, phase Succeeded.
+
+**Two-cluster DR check (Task 13 steps 2–3) — DEFERRED: 24 GB is not enough.**
+Two concurrently active 16 GB SNO VMs thrash the host: 30 GB swap exhausted,
+~60 MB free RAM, the second cluster's apiserver refuses connections and its
+first MCO rollout starves. Collateral: the machine-config daemon's API watches
+wedged permanently (8 h of silence in a Running pod; recovery = delete the MCD
+pod). The second install only progressed after `easyshift stop` of the first
+cluster. Sequential installs work; *simultaneous steady-state* was not
+validated. Re-run the DR gate on a host with ≥ 48 GB (tracked in ROADMAP.md).
+The disk preflight also blocked a second 120 GB master disk — `--master-disk`
+now exists for tight hosts.

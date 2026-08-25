@@ -1521,32 +1521,32 @@ Assisted-by: Claude Code/claude-opus-4-8"
 
 ## Task 12: Boot a real single-node aarch64 cluster
 
-- [ ] **Step 1: Create a cluster**
+- [x] **Step 1: Create a cluster**
 
 Run: `./easyshift create dr1 --magic-dns auto` (NAT mode; arm64 is auto-selected on this host). Authenticate to Red Hat when prompted for the pull secret.
 Expected: stages run through `publish-pxe-assets`, `create-network`, `create-master-vms`; vfkit boots; `wait-for-install` proceeds.
 
-- [ ] **Step 2: Verify convergence**
+- [x] **Step 2: Verify convergence** (2026-08-24: converged in 29m10s)
 
 Run: `./easyshift status dr1` and `oc --kubeconfig ~/.config/easyshift/clusters/dr1/auth/kubeconfig get nodes`.
 Expected: VM running (via `VMManager.IsRunning`), node `Ready`, API reachable from the host at the master IP (host is on the vmnet subnet).
 
-- [ ] **Step 3: Record results in the spec's "Open risks" section**
+- [x] **Step 3: Record results in the spec's "Open risks" section**
 
 Update the spec's risk bullets with the observed outcome (PXE boot worked / adjustments needed). Commit the doc update.
 
 ## Task 13: Rosetta in-guest + two-cluster DR
 
-- [ ] **Step 1: Verify Rosetta translation in the guest**
+- [x] **Step 1: Verify Rosetta translation in the guest** (2026-08-25: required wiring the MachineConfig + SELinux context= mount; see spike doc update)
 
 Run (via `oc debug node/…` or SSH): check `/proc/sys/fs/binfmt_misc/rosetta` exists and run an `amd64` container image (e.g. `podman run --arch amd64 …` or an `oc run` of an x86-64 image) and confirm it executes.
 Expected: x86-64 binary runs translated.
 
-- [ ] **Step 2: Two-cluster DR check**
+- [ ] **Step 2: Two-cluster DR check** (DEFERRED 2026-08-25: 24 GB host cannot run two active 16 GB SNO VMs; see spike doc + ROADMAP.md)
 
 Run: `./easyshift create dr2 --magic-dns auto` (second cluster on the shared `192.168.126.0/24`). Then from dr1's node, reach dr2's API/IP and vice-versa; from the host, reach both APIs.
 Expected: guest↔guest reachability across clusters and host reaching both cluster APIs — the DR-parity gate.
 
-- [ ] **Step 3: Record the DR outcome**
+- [x] **Step 3: Record the DR outcome** (deferral + memory envelope recorded in the spike doc)
 
 Update the spec "Open risks" with the two-cluster result; if the per-VM-sidecar shared-subnet model needs adjustment (e.g. fall back to macOS-26 `vmnet-broker`), capture the change as a new design decision and a follow-up task. Commit.
