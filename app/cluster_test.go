@@ -1314,6 +1314,30 @@ func TestCreateCluster_BridgeMode_FailsOnBadDNS(t *testing.T) {
 	})
 }
 
+// TestValidateODFDefaults asserts --odf raises the resource floors and
+// defaults the data disk, and that --odf-disk without --odf is rejected.
+func TestValidateODFDefaults(t *testing.T) {
+	cfg, deps, _ := newTestEnv(t)
+	mgr := app.NewClusterManager(cfg, deps)
+
+	c := newTestCluster("odfy")
+	c.ODF = true
+	c.MasterCPUs = 4
+	c.MasterRAM = 16000
+	if err := mgr.Create(context.Background(), c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.MasterCPUs != 8 || c.MasterRAM != 19456 || c.ODFDiskGB != 100 {
+		t.Errorf("ODF floors not applied: cpus=%d ram=%d disk=%d", c.MasterCPUs, c.MasterRAM, c.ODFDiskGB)
+	}
+
+	bad := newTestCluster("odfless")
+	bad.ODFDiskGB = 50 // set without ODF
+	if err := mgr.Create(context.Background(), bad); err == nil {
+		t.Error("expected error: --odf-disk without --odf")
+	}
+}
+
 func readState(t *testing.T, configDir, clusterName string) *interfaces.ClusterState {
 	t.Helper()
 	path := filepath.Join(configDir, "clusters", clusterName, "state.json")

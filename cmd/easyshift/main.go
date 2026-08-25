@@ -128,6 +128,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		masterRAM   int
 		workerRAM   int
 		masterDisk  int
+		masterCPUs  int
 		networkMode string
 		bridge      string
 		masterMAC   string
@@ -142,6 +143,8 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		tlsStaging  bool
 		magicDNS    string
 		bakeImages  bool
+		odf         bool
+		odfDisk     int
 	)
 
 	cmd := &cobra.Command{
@@ -158,6 +161,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 				MasterRAM:    masterRAM,
 				WorkerRAM:    workerRAM,
 				MasterDiskGB: masterDisk,
+				MasterCPUs:   masterCPUs,
 				NetworkMode:  networkMode,
 				Bridge:       bridge,
 				MasterMAC:    masterMAC,
@@ -172,6 +176,8 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 				TLSStaging:   tlsStaging,
 				MagicDNS:     magicDNS,
 				BakeImages:   bakeImages,
+				ODF:          odf,
+				ODFDiskGB:    odfDisk,
 			}
 			// In a bridge-mode simulation there is no real node, so pretend it
 			// came up on its reserved IP — otherwise the verify-master-ip stage
@@ -244,6 +250,13 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 		"Pre-pull the entire OCP release payload into a read-only disk attached to the master so "+
 			"the install never reaches quay.io for platform images. Built once per version (multi-arch: "+
 			"amd64 + aarch64), shared across clusters. Needs skopeo + virt-make-fs on PATH.")
+	cmd.Flags().IntVar(&masterCPUs, "master-cpus", 4, "Master node vCPUs (raised to 8 automatically with --odf)")
+	cmd.Flags().BoolVar(&odf, "odf", false,
+		"Install OpenShift Data Foundation after the cluster is up: a dedicated data disk, "+
+			"LVMS thin pool, and a single-node Ceph StorageCluster (RBD + CephFS StorageClasses). "+
+			"Raises the master to 8 vCPUs / 19456 MiB RAM. Needs the default OperatorHub catalogs (online).")
+	cmd.Flags().IntVar(&odfDisk, "odf-disk", 0,
+		"ODF backing data disk size in GB (sparse; default 100; usable Ceph capacity is about a third). Requires --odf.")
 
 	_ = cmd.MarkFlagRequired("name")
 	return cmd

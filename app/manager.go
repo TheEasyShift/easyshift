@@ -42,6 +42,9 @@ const (
 	defaultWorkerCPUs   = 2
 	defaultMasterDiskGB = 120
 	defaultWorkerDiskGB = 120
+	defaultODFDiskGB    = 100
+	odfMinCPUs          = 8
+	odfMinRAMMiB        = 19456
 )
 
 // ClusterManager owns the cluster lifecycle. Side-effecting work is delegated
@@ -316,6 +319,9 @@ func (cm *ClusterManager) validateNew(c *config.ClusterConfig) error {
 	default:
 		return fmt.Errorf("invalid NetworkMode %q (want %q or %q)", c.NetworkMode, config.NetworkModeNAT, config.NetworkModeBridge)
 	}
+	if !c.ODF && c.ODFDiskGB != 0 {
+		return fmt.Errorf("--odf-disk requires --odf")
+	}
 	return nil
 }
 
@@ -345,6 +351,19 @@ func (cm *ClusterManager) applyDefaults(c *config.ClusterConfig) {
 	}
 	if c.WorkerDiskGB == 0 {
 		c.WorkerDiskGB = defaultWorkerDiskGB
+	}
+	if c.ODF {
+		if c.MasterCPUs < odfMinCPUs {
+			logrus.Infof("--odf requires %d vCPUs; raising master CPUs from %d", odfMinCPUs, c.MasterCPUs)
+			c.MasterCPUs = odfMinCPUs
+		}
+		if c.MasterRAM < odfMinRAMMiB {
+			logrus.Infof("--odf requires %d MiB RAM; raising master RAM from %d", odfMinRAMMiB, c.MasterRAM)
+			c.MasterRAM = odfMinRAMMiB
+		}
+		if c.ODFDiskGB == 0 {
+			c.ODFDiskGB = defaultODFDiskGB
+		}
 	}
 	if c.StoragePool == "" {
 		c.StoragePool = config.DefaultStoragePool
