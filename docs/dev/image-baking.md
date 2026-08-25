@@ -30,12 +30,20 @@ a no-op, like the binaries cache). `providers/openshift.OpenShiftImageBaker`:
    supported arch enumerates the component pullspecs.
 2. `skopeo copy --all` copies each into an overlay container store
    (`store/`). `--all` keeps every manifest-list entry.
-3. `virt-make-fs --type=ext4 --label=baked-images --format=qcow2` packs the
-   store into `store.qcow2`. `virt-make-fs` runs rootless via libguestfs, so no
-   root is required.
+3. The store is packed into a labeled ext4 disk image (`PackCommand`):
+   - **Linux**: `virt-make-fs --type=ext4 --label=baked-images --format=qcow2`
+     → `store.qcow2` (rootless via libguestfs; qcow2 because a per-cluster
+     copy is uploaded into the libvirt pool).
+   - **macOS**: `mke2fs -t ext4 -L baked-images -d <store>` → `store.img`
+     (raw — vfkit's virtio-blk takes raw). No libguestfs exists on macOS;
+     `mke2fs -d` populates the fs from a directory without mounting. The
+     image is sized from the overlay contents (+10% and 1 GiB headroom).
+     Homebrew's e2fsprogs is keg-only, so its keg sbin paths are probed
+     (`config.MKE2FSCandidates`).
 
-Needs `skopeo` and `virt-make-fs` (guestfs-tools / libguestfs-tools) on PATH;
-the bake stage preflights both.
+Preflight requires `skopeo` plus the per-OS packer: `virt-make-fs`
+(guestfs-tools / libguestfs-tools) on Linux, `mke2fs`
+(`brew install e2fsprogs`) on macOS.
 
 ### Multi-arch
 
@@ -49,10 +57,12 @@ RHCOS live-ISO arch is still selected separately (see
 
 ### Attach + wire (node side)
 
-- `stages/createmastervms` uploads a **per-cluster** copy of `store.qcow2` into
-  the libvirt pool (`ImportDisk`) and attaches it read-only + shareable. Per
-  cluster — not shared — so `virsh undefine --remove-all-storage` on delete
-  never strands another cluster.
+- `stages/createmastervms` attaches a **per-cluster** copy of the store via
+  `ImportDisk`: on Linux uploaded into the libvirt pool (read-only +
+  shareable; per cluster so `virsh undefine --remove-all-storage` on delete
+  never strands another cluster), on macOS APFS-cloned into the vfkit state
+  dir (vfkit has no read-only virtio-blk, so the per-cluster copy is the
+  isolation; `Delete` removes the clone).
 - The disk is mounted by label (`/dev/disk/by-label/baked-images` →
   `/var/lib/baked-images`) and registered with CRI-O via
   `additionalimagestores` in a `storage.conf` drop-in.
@@ -61,9 +71,11 @@ RHCOS live-ISO arch is still selected separately (see
     `openshift/` (`Installer.WriteImageStoreManifest`) so it is rendered into
     the node's ignition and present from first boot, before CRI-O pulls
     operators.
-  - **bootstrap:** the same file + mount unit merged into
-    `bootstrap-in-place-for-live-iso.ign`
-    (`Installer.MergeImageStoreIntoLiveISOIgnition`) before the ISO is embedded.
+  - **bootstrap:** the same file + mount unit merged into the bootstrap
+    ignition (`Installer.MergeImageStoreIntoLiveISOIgnition`) — on Linux into
+    `bootstrap-in-place-for-live-iso.ign` before the ISO is embedded
+    (`embed-ignition-iso`), on macOS into the HTTP-served `config.ign`
+    (`publish-pxe-assets`).
 
 Renderers live in `providers/openshift/baker.go` (`RenderStorageConfDropin`,
 `RenderMountUnit`, `RenderMachineConfig`, `MergeBakedStoreIntoIgnition`) and are
