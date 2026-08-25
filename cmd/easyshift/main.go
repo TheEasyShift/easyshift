@@ -254,7 +254,7 @@ func newCreateCommand(mgr **app.ClusterManager, simBundle **fakes.Bundle, cfgp *
 	cmd.Flags().BoolVar(&odf, "odf", false,
 		"Install OpenShift Data Foundation after the cluster is up: a dedicated data disk, "+
 			"LVMS thin pool, and a single-node Ceph StorageCluster (RBD + CephFS StorageClasses). "+
-			"Raises the master to 8 vCPUs / 19456 MiB RAM. Needs the default OperatorHub catalogs (online).")
+			"Raises the master to 8 vCPUs / 24576 MiB RAM (full ODF feature set: block, file, and object storage). Needs the default OperatorHub catalogs (online).")
 	cmd.Flags().IntVar(&odfDisk, "odf-disk", 0,
 		"ODF backing data disk size in GB (sparse; default 100; usable Ceph capacity is about a third). Requires --odf.")
 

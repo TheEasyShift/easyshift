@@ -45,7 +45,7 @@ const (
 	defaultWorkerDiskGB = 120
 	defaultODFDiskGB    = 100
 	odfMinCPUs          = 8
-	odfMinRAMMiB        = 19456
+	odfMinRAMMiB        = 24576
 )
 
 // ClusterManager owns the cluster lifecycle. Side-effecting work is delegated

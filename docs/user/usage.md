@@ -64,9 +64,13 @@ Only `--name` is required. Key flags:
 | `--tls-staging` | Use Let's Encrypt staging (untrusted certs, no rate limits) while iterating. |
 
 **Storage (`--odf`)**: installs [OpenShift Data Foundation](https://www.redhat.com/en/technologies/cloud-computing/openshift-data-foundation)
-(Ceph via Rook) onto the single master node. You get working RBD and CephFS
-`StorageClasses` backed by a dedicated VM data disk and an in-node LVMS thin
-pool — a real Ceph cluster reporting `HEALTH_OK`, not a shortcut.
+(Ceph via Rook) onto the single master node. You get the full ODF feature
+set: working RBD and CephFS `StorageClasses`, S3-compatible object storage
+(NooBaa Multicloud Gateway + Ceph RGW), and ODF's own monitoring — all backed
+by a dedicated VM data disk and an in-node LVMS thin pool. A real Ceph
+cluster reporting `HEALTH_OK`, not a shortcut: easyshift trims resource
+*requests* to fit one node but never disables features. What you lose versus
+production is the infrastructure (one node, one disk), not the features.
 
 ```sh
 easyshift create --name demo --odf                  # default 100 GB data disk
@@ -84,7 +88,7 @@ OSDs share the one data disk, so PV-visible space works out to about a third
 of what you asked for, not the whole disk.
 
 **Resource floors**: `--odf` needs real headroom. It automatically raises
-the master to **8 vCPUs and 19456 MiB RAM** if your `--master-ram` /
+the master to **8 vCPUs and 24576 MiB RAM** if your `--master-ram` /
 `--master-cpus` were lower (a log line tells you when it does). That floor
 is hardware-validated, not a guess, and it leaves essentially no slack —
 budget a **24 GB host as the practical minimum**, with zero headroom to
