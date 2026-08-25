@@ -69,7 +69,7 @@ func (cm *ClusterManager) buildStages() []interfaces.Stage {
 	// (kernel/initrd/rootfs + ignition over HTTP) for vfkit's Linux bootloader.
 	bootMedia := interfaces.Stage(embedignitioniso.New(d.Installer, d.VM))
 	if runtime.GOOS == "darwin" {
-		bootMedia = publishpxeassets.New(d.Files)
+		bootMedia = publishpxeassets.New(d.Files, d.Installer)
 	}
 	return []interfaces.Stage{
 		registercluster.New(),

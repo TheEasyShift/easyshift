@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"strings"
 
 	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -40,12 +42,43 @@ func (s *Stage) Preflight(_ context.Context, sc *interfaces.StageContext) error 
 	if err := config.ValidatePullSecretJSON(sc.Config.ConfigDir); err != nil {
 		return err
 	}
-	for _, tool := range []string{"skopeo", "virt-make-fs"} {
-		if err := s.host.LookPath(tool); err != nil {
-			return fmt.Errorf("--bake-images needs %q on PATH: %w\n  hint: install skopeo and guestfs-tools (Fedora/RHEL) or skopeo + libguestfs-tools (Debian/Ubuntu)", tool, err)
+	if err := s.host.LookPath("skopeo"); err != nil {
+		return fmt.Errorf("--bake-images needs %q on PATH: %w\n  hint: %s", "skopeo", err, bakeToolHint())
+	}
+	if runtime.GOOS == "darwin" {
+		// The packer is mke2fs (no libguestfs on macOS); Homebrew's e2fsprogs
+		// is keg-only, so also probe its known keg locations.
+		if !mke2fsPresent(s.host) {
+			return fmt.Errorf("--bake-images needs mke2fs (none of %v found)\n  hint: %s", config.MKE2FSCandidates, bakeToolHint())
 		}
+		return nil
+	}
+	if err := s.host.LookPath("virt-make-fs"); err != nil {
+		return fmt.Errorf("--bake-images needs %q on PATH: %w\n  hint: %s", "virt-make-fs", err, bakeToolHint())
 	}
 	return nil
+}
+
+func mke2fsPresent(host interfaces.HostInspector) bool {
+	for _, c := range config.MKE2FSCandidates {
+		if strings.Contains(c, "/") {
+			if _, err := os.Stat(c); err == nil {
+				return true
+			}
+			continue
+		}
+		if err := host.LookPath(c); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func bakeToolHint() string {
+	if runtime.GOOS == "darwin" {
+		return "brew install skopeo e2fsprogs"
+	}
+	return "install skopeo and guestfs-tools (Fedora/RHEL) or skopeo + libguestfs-tools (Debian/Ubuntu)"
 }
 
 func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
@@ -75,6 +108,6 @@ func (s *Stage) spec(sc *interfaces.StageContext) interfaces.BakeSpec {
 		OCBinaryPath:   sc.OCBinaryPath(),
 		PullSecretPath: config.PullSecretPath(cfgDir),
 		OverlayDir:     config.ImageStoreOverlayDir(cfgDir, version),
-		OutputQcowPath: config.ImageStoreQcowPath(cfgDir, version),
+		OutputDiskPath: config.ImageStoreDiskPath(cfgDir, version),
 	}
 }

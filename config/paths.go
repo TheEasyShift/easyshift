@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -44,19 +45,38 @@ func ImageStoreOverlayDir(configDir, version string) string {
 	return filepath.Join(ImageStoreCacheDir(configDir, version), "store")
 }
 
-// ImageStoreQcowPath is the packed read-only qcow2 (an ext4 filesystem labeled
+// ImageStoreDiskPath is the packed read-only disk (an ext4 filesystem labeled
 // BakedImagesLabel containing the overlay store) for the given version. Built
-// once on the host; a per-cluster copy is uploaded into the libvirt pool and
-// attached to the master.
-func ImageStoreQcowPath(configDir, version string) string {
-	return filepath.Join(ImageStoreCacheDir(configDir, version), "store.qcow2")
+// once on the host; a per-cluster copy is attached to the master. Linux packs
+// a qcow2 (libvirt vol-upload); macOS packs a raw image (vfkit's virtio-blk
+// takes raw), hence the per-OS extension.
+func ImageStoreDiskPath(configDir, version string) string {
+	return filepath.Join(ImageStoreCacheDir(configDir, version), "store."+imageStoreDiskExt())
 }
 
-// ImageStoreVolName is the per-cluster libvirt pool volume name for the
-// attached baked-image-store disk. Per-cluster (not shared) so cluster delete
-// — which removes all of a domain's storage — never strands another cluster.
+// ImageStoreVolName is the per-cluster name for the attached baked-image-store
+// disk: a libvirt pool volume on Linux, a file in the vfkit state dir on
+// macOS. Per-cluster (not shared) so cluster delete — which removes all of a
+// domain's storage — never strands another cluster.
 func ImageStoreVolName(name string) string {
-	return "easyshift-" + name + "-imagestore.qcow2"
+	return "easyshift-" + name + "-imagestore." + imageStoreDiskExt()
+}
+
+func imageStoreDiskExt() string {
+	if runtime.GOOS == "darwin" {
+		return "img"
+	}
+	return "qcow2"
+}
+
+// MKE2FSCandidates are the locations probed for mke2fs on macOS (used to pack
+// the baked image store; Homebrew's e2fsprogs is keg-only, so its sbin is
+// normally not on PATH). Bare names are resolved via PATH, absolute paths via
+// stat.
+var MKE2FSCandidates = []string{
+	"mke2fs",
+	"/opt/homebrew/opt/e2fsprogs/sbin/mke2fs",
+	"/usr/local/opt/e2fsprogs/sbin/mke2fs",
 }
 
 // ClusterDNSNames returns the DNS names a bridge-mode cluster needs, all of

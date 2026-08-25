@@ -30,11 +30,15 @@ import (
 
 // Stage publishes PXE-style boot assets.
 type Stage struct {
-	files interfaces.FileServer
+	files     interfaces.FileServer
+	installer interfaces.Installer
 }
 
-// New returns the publish-pxe-assets stage.
-func New(files interfaces.FileServer) *Stage { return &Stage{files: files} }
+// New returns the publish-pxe-assets stage. installer is used only for the
+// --bake-images ignition merge.
+func New(files interfaces.FileServer, installer interfaces.Installer) *Stage {
+	return &Stage{files: files, installer: installer}
+}
 
 func (*Stage) Name() string { return "publish-pxe-assets" }
 
@@ -51,7 +55,7 @@ func KernelCmdline(baseURL, cluster string) string {
 // Apply copies the RHCOS rootfs and the SNO ignition (with a static-network
 // keyfile injected to pin the master IP) into <fileserver-root>/<cluster>/, and
 // records the install-phase cmdline on the cluster for create-master-vms.
-func (s *Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
+func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	cluster := sc.Cluster.Name
 	dstDir := filepath.Join(s.files.RootDir(), cluster)
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
@@ -69,8 +73,17 @@ func (s *Stage) Apply(_ context.Context, sc *interfaces.StageContext) error {
 	if err != nil {
 		return fmt.Errorf("inject static network: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dstDir, "config.ign"), merged, 0o600); err != nil {
+	ignPath := filepath.Join(dstDir, "config.ign")
+	if err := os.WriteFile(ignPath, merged, 0o600); err != nil {
 		return fmt.Errorf("publish ignition: %w", err)
+	}
+	// Baking: wire the baked store into the *served* ignition — the macOS
+	// equivalent of embed-ignition-iso's live-ISO merge on Linux — so the
+	// bootstrap phase mounts the store and CRI-O serves images locally.
+	if sc.Cluster.BakeImages {
+		if err := s.installer.MergeImageStoreIntoLiveISOIgnition(ctx, sc.InstallerSpec(), ignPath); err != nil {
+			return fmt.Errorf("merge image store into served ignition: %w", err)
+		}
 	}
 
 	sc.Cluster.InstallKernelCmdline = KernelCmdline(s.files.BaseURL(), cluster)
