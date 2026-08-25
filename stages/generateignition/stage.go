@@ -67,6 +67,16 @@ func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {
 	if err := s.installer.WriteInstallConfig(ctx, spec); err != nil {
 		return err
 	}
+	// Extra manifests (Rosetta, baked image store) are only rendered into the
+	// ignition if `create manifests` ran first — without its state,
+	// single-node-ignition-config silently ignores files dropped into
+	// openshift/ (validated on hardware). Skip when no extras are written to
+	// keep the plain path identical.
+	if runtime.GOOS == "darwin" || sc.Cluster.BakeImages {
+		if err := s.installer.CreateManifests(ctx, spec); err != nil {
+			return err
+		}
+	}
 	if runtime.GOOS == "darwin" {
 		// vfkit attaches the Rosetta virtiofs device; drop the MachineConfig
 		// that mounts it and registers the x86-64 binfmt handler so the

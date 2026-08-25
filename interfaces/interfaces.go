@@ -187,6 +187,12 @@ type InstallerSpec struct {
 // Installer abstracts invocations of openshift-install and coreos-installer.
 type Installer interface {
 	WriteInstallConfig(ctx context.Context, spec InstallerSpec) error
+	// CreateManifests runs `openshift-install create manifests`, materializing
+	// the manifests/ + openshift/ dirs and the installer state. Required
+	// before dropping extra manifests (Rosetta, baked image store): without
+	// the state from this step, `create single-node-ignition-config` silently
+	// ignores files pre-dropped into openshift/ (validated on hardware).
+	CreateManifests(ctx context.Context, spec InstallerSpec) error
 	CreateIgnitionConfigs(ctx context.Context, spec InstallerSpec) error
 	// WriteImageStoreManifest drops a MachineConfig into the install dir's
 	// openshift/ so the next ignition render wires CRI-O to the baked image
