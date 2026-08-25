@@ -203,3 +203,26 @@ CephFS StorageClasses, and a PVC write test succeeded. Pinned facts:
   a 24 GB Mac into a load-300 death spiral; 19 GB is the ceiling there.
 - Timeouts observed: CSVs ≤ 10 min, LVMCluster ≤ 2 min, StorageCluster
   Ready 15–45 min (budget 30 min on a right-sized VM), SCs + a few min.
+
+## Implementation validation (2026-08-25, cluster `odfy`, shipped code path)
+
+`easyshift create -n odfy --odf --master-disk 60 --master-ram 19456` (no
+baking → `/dev/vdb` path), zero hand-edits: cluster converged in ~26 min and
+the `install-odf` stage completed all four phases in **~13 min** —
+StorageCluster `Ready` ~6 min after creation (the spike's 45 min was
+debugging, not inherent cost). Verified: Ceph `HEALTH_OK`, 3 OSDs, both
+`ocs-storagecluster-ceph-rbd`/`-cephfs` StorageClasses, RBD PVC Bound in
+21 s with a pod write (`odf-works`), and a full `easyshift stop`/`start`
+cycle after which the node returned Ready, Ceph `HEALTH_OK` with all OSDs,
+and the StorageCluster re-settled to `Ready` (device paths stable across
+reboots). CPU auto-raise observed in the log ("raising master CPUs from 4").
+
+Two findings outside --odf's scope, recorded for follow-up: (1) the
+`--master-ram` default (32768) exceeds Virtualization.framework's cap on a
+24 GB host — vfkit crash-loops at launch and the install watchdog then
+flips the phase to "run" on the dead VM; create must be given an explicit
+`--master-ram` on small hosts until a host-RAM-aware cap/preflight exists.
+(2) The vmnet-helper sidecar dies with the invoking process group while
+vfkit survives, leaving a running VM with no network; `start` on a running
+VM does not respawn a dead sidecar. Both are pre-existing macOS backend
+gaps, tracked in ROADMAP.md.
