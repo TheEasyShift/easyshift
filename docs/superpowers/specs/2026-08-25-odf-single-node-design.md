@@ -95,9 +95,17 @@ Ordered steps (recipe ordering, each wait-bounded):
    portable: false`, block-mode `dataPVCTemplate` on the Immediate SC — with
    the derived size. Wait for `StorageCluster` phase `Ready` (timeout ~20 min).
 
-Rollback: no-op (with comment). Cluster delete destroys the VM and its disks
-wholesale; the recipe's careful finalizer-ordered teardown only matters when
-the cluster outlives ODF, which easyshift's stage model never does.
+Rollback: no-op (with comment). Justification: (a) the runner invokes
+Rollback only on `easyshift delete` (failed creates resume, they don't roll
+back), where the immediately following rollbacks destroy the VM and both
+disks — no state survives that graceful in-cluster teardown could improve;
+(b) attempting the recipe's finalizer-ordered removal during delete would
+make `easyshift delete` depend on a live apiserver and healthy operators —
+a half-broken cluster (the usual reason for deleting) could wedge the delete
+indefinitely, and a no-op guarantees delete always completes. The recipe's
+teardown ordering is only needed if a day-2 "remove ODF, keep the cluster"
+command ever exists; that feature would inherit it
+(StorageCluster → operators → VG/disk).
 
 ## Rendering + testing
 
