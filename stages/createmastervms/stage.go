@@ -59,8 +59,8 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	// Baking attaches a per-cluster copy of the store disk; count it — except
 	// on macOS, where ImportDisk APFS-clones the cached image and the copy
 	// costs no space until modified (it never is: the guest mounts it ro).
-	// The ODF data disk is sparse on both backends (APFS clonefile on macOS,
-	// qcow2 on Linux) so it costs no upfront space.
+	// The ODF data disk is sparse on both backends (a truncate-sparse raw file
+	// on macOS, qcow2 on Linux) so it costs no upfront space.
 	if sc.Cluster.BakeImages && runtime.GOOS != "darwin" {
 		if fi, err := os.Stat(config.ImageStoreDiskPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
 			need += uint64(fi.Size())

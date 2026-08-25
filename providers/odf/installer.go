@@ -231,12 +231,19 @@ func (i *Installer) csvSucceeded(ctx context.Context, spec interfaces.ODFSpec, n
 // the poll immediately.
 func (i *Installer) pollUntil(ctx context.Context, timeout time.Duration, desc string, probe func() (bool, error)) error {
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for {
 		ok, err := probe()
 		if err == nil && ok {
 			return nil
 		}
+		if err != nil {
+			lastErr = err
+		}
 		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("timed out after %s waiting for %s: last error: %v", timeout, desc, lastErr)
+			}
 			return fmt.Errorf("timed out after %s waiting for %s", timeout, desc)
 		}
 		select {

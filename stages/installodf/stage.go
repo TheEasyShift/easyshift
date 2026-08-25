@@ -7,7 +7,6 @@ package installodf
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/TheEasyShift/easyshift/config"
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -54,7 +53,7 @@ func (s *Stage) spec(sc *interfaces.StageContext) interfaces.ODFSpec {
 		device = "/dev/vdc" // the bake store occupies vdb
 	}
 	return interfaces.ODFSpec{
-		KubeconfigPath: filepath.Join(sc.ClusterDir(), "auth", "kubeconfig"),
+		KubeconfigPath: sc.KubeconfigPath(),
 		OCBinaryPath:   sc.OCBinaryPath(),
 		WorkDir:        sc.ClusterDir(),
 		Channel:        config.OLMChannelForVersion(sc.Cluster.OCPVersion),

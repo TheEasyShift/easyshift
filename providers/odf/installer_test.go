@@ -265,7 +265,9 @@ func TestCreateStorageCluster(t *testing.T) {
 
 // TestPollUntilTimeoutNamesPhase pins the timeout-path contract directly: a
 // probe that never converges must return promptly (within the shrunk
-// timeout) with an error naming the phase, not hang or loop forever.
+// timeout) with an error naming the phase, not hang or loop forever. The
+// probe keeps failing with a distinct error so the timeout message must also
+// surface that underlying error rather than discarding it.
 func TestPollUntilTimeoutNamesPhase(t *testing.T) {
 	withShortTimeouts(t)
 	i := New(&fakes.CommandRunner{})
@@ -273,13 +275,16 @@ func TestPollUntilTimeoutNamesPhase(t *testing.T) {
 	calls := 0
 	err := i.pollUntil(context.Background(), waitCSV, "the widget phase", func() (bool, error) {
 		calls++
-		return false, nil
+		return false, errors.New("connection refused: widget-api unreachable")
 	})
 	if err == nil {
 		t.Fatal("expected a timeout error, got nil")
 	}
 	if !strings.Contains(err.Error(), "the widget phase") {
 		t.Errorf("timeout error %q does not name the phase", err.Error())
+	}
+	if !strings.Contains(err.Error(), "connection refused: widget-api unreachable") {
+		t.Errorf("timeout error %q does not include the last probe error", err.Error())
 	}
 	if calls < 2 {
 		t.Errorf("expected the probe to be polled more than once before timing out, got %d calls", calls)
