@@ -59,6 +59,8 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	// Baking attaches a per-cluster copy of the store disk; count it — except
 	// on macOS, where ImportDisk APFS-clones the cached image and the copy
 	// costs no space until modified (it never is: the guest mounts it ro).
+	// The ODF data disk is sparse on both backends (APFS clonefile on macOS,
+	// qcow2 on Linux) so it costs no upfront space.
 	if sc.Cluster.BakeImages && runtime.GOOS != "darwin" {
 		if fi, err := os.Stat(config.ImageStoreDiskPath(sc.Config.ConfigDir, sc.Cluster.OCPVersion)); err == nil {
 			need += uint64(fi.Size())
@@ -117,6 +119,15 @@ func (s *Stage) createMasterVM(ctx context.Context, sc *interfaces.StageContext,
 			return err
 		}
 		extraDisks = append(extraDisks, disk)
+	}
+	if c.ODF {
+		path, err := s.vm.CreateDataDisk(ctx, c.StoragePool, config.ODFVolName(vmName), c.ODFDiskGB)
+		if err != nil {
+			return fmt.Errorf("create odf data disk: %w", err)
+		}
+		// Writable and exclusive; attached after the bake store so the guest
+		// device path is deterministic (/dev/vdb, or /dev/vdc with baking).
+		extraDisks = append(extraDisks, interfaces.ExtraDisk{Path: path})
 	}
 	spec := interfaces.VMSpec{
 		Name:        vmName,
