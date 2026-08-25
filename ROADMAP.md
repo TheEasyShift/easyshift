@@ -28,24 +28,27 @@ mounted with `context=container_file_t` — see the Task 13 notes in the spec),
       on darwin). Needs a vmnet bridged-mode story before LAN-reachable
       clusters work on Mac.
 
-## Image baking (`--bake-images`) — branch `rtalur-bake-images-macos`
+## Image baking (`--bake-images`) — merged (#17) + follow-up fixes
 
-Code-complete on both backends (see `docs/dev/image-baking.md`). Linux:
-skopeo + virt-make-fs → qcow2 into the libvirt pool. macOS: skopeo +
-`mke2fs -d` → raw image, APFS-cloned per cluster, merged into the HTTP-served
-ignition. `make check` green; darwin pipeline validated under `--simulate` and
-the mke2fs pack validated against real e2fsprogs.
+**Validated end-to-end on macOS hardware (2026-08-25)**: a clean
+`create --bake-images` converged in ~25.5 min (storeless baseline: 29 min)
+with the store mounted read-only from first boot, CRI-O serving ~173 store
+images via the crio drop-in, only 8 network image pulls and 1.0 GiB total RX
+in 20 min (the broken run pulled 7.1 GiB in five). Rosetta amd64 execution
+also verified from first boot. Three hardware-found fixes live on branch
+`rtalur-bake-followups`: APFS-clone-aware disk preflight, `create manifests`
+before extra-manifest drops (they were silently ignored), and the CRI-O
+drop-in replacing the unsupported `storage.conf.d` mechanism.
 
-Branch note: `rtalur-bake-images` is the same feature rebased onto `main`
-(without the macOS backend); `rtalur-bake-images-macos` stacks it on
-`rtalur-macos-backend` and adds the macOS integration. Whichever merge order
-is chosen, keep only one of the two bake branches.
-
-- [ ] **End-to-end validation on a real cluster** (either OS): a
-      `--bake-images` install confirming CRI-O serves release images from the
-      store, not quay.io, in both bootstrap and post-pivot phases. Needs
-      ~40+ GB free disk for the multi-arch store — did not fit the dev Mac
-      alongside the existing cluster.
+- [ ] **Productize the macOS store builder.** skopeo cannot author an overlay
+      container store on macOS (Linux-only graph driver), so the baker's
+      skopeo step fails on a Mac. The validated workaround built the store
+      inside the podman machine and copied out `store.img` (bake stage's
+      `Ready()` then skips the build). Implement that as the darwin baker
+      backend (podman machine or any Linux builder), including multi-arch
+      (`--all`) copies — the spike store was aarch64-only.
+- [ ] **Linux-side validation**: the qcow2/virt-make-fs/libvirt-pool variant
+      of the attach path has not run against a real Linux host.
 
 ## Later phases (per project vision)
 

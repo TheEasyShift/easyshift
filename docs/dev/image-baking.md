@@ -64,8 +64,13 @@ RHCOS live-ISO arch is still selected separately (see
   dir (vfkit has no read-only virtio-blk, so the per-cluster copy is the
   isolation; `Delete` removes the clone).
 - The disk is mounted by label (`/dev/disk/by-label/baked-images` →
-  `/var/lib/baked-images`) and registered with CRI-O via
-  `additionalimagestores` in a `storage.conf` drop-in.
+  `/var/lib/baked-images`) and registered with CRI-O via a **CRI-O drop-in**
+  (`/etc/crio/crio.conf.d/10-baked-images.conf`,
+  `storage_option = ["overlay.imagestore=…"]`). NOT via
+  `/etc/containers/storage.conf.d/`: RHCOS 9.8's containers-common (5.8)
+  silently ignores that dir — validated on hardware, where the store sat
+  mounted-but-unread and every image still came from quay.io until the CRI-O
+  drop-in surfaced all of them.
 - That wiring is applied in **both** install phases:
   - **post-pivot:** a master `MachineConfig` dropped into the install dir's
     `openshift/` (`Installer.WriteImageStoreManifest`) so it is rendered into
@@ -77,9 +82,26 @@ RHCOS live-ISO arch is still selected separately (see
     (`embed-ignition-iso`), on macOS into the HTTP-served `config.ign`
     (`publish-pxe-assets`).
 
-Renderers live in `providers/openshift/baker.go` (`RenderStorageConfDropin`,
+Renderers live in `providers/openshift/baker.go` (`RenderCRIODropin`,
 `RenderMountUnit`, `RenderMachineConfig`, `MergeBakedStoreIntoIgnition`) and are
 unit-tested in `baker_test.go`.
+
+**Extra-manifest ordering (hardware-validated):** `openshift-install create
+single-node-ignition-config` only renders manifests dropped into `openshift/`
+if `create manifests` ran first — without that state they are silently
+ignored. `generate-ignition` therefore calls `Installer.CreateManifests`
+before the manifest writes whenever extras are needed (darwin or
+`--bake-images`).
+
+**macOS store-build limitation:** skopeo cannot author a
+`containers-storage:` overlay store on macOS (the overlay graph driver is
+Linux-only), so the coded skopeo path in the baker cannot run on a Mac. The
+validated workaround builds the store inside a Linux VM (e.g. the podman
+machine: skopeo into an overlay store on the machine's own fs, `mke2fs -d`
+pack there, copy out the single `store.img` to
+`~/.config/easyshift/imagestore/<version>/`); the bake stage's `Ready()`
+probe then skips the build. Productizing that builder is tracked in
+ROADMAP.md.
 
 ## Verification boundary
 
