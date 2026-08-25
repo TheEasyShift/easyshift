@@ -105,8 +105,11 @@ func (i *Installer) EnableSingleNode(ctx context.Context, spec interfaces.ODFSpe
 	}
 
 	if err := i.pollUntil(ctx, waitSettle, "ocs-operator deployment SINGLE_NODE + Available", func() (bool, error) {
+		// ocs-operator's deployment is single-container, so [0] is safe;
+		// this exact jsonpath form is the one validated live against the
+		// 2026-08-25 hardware spike cluster.
 		env, err := i.ocJSONPath(ctx, spec,
-			`{range .spec.template.spec.containers[*]}{range .env[?(@.name=="SINGLE_NODE")]}{.value}{end}{end}`,
+			`{.spec.template.spec.containers[0].env[?(@.name=="SINGLE_NODE")].value}`,
 			"get", "deploy", "ocs-operator", "-n", odfNamespace)
 		if err != nil {
 			return false, err
