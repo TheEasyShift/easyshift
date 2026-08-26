@@ -1399,3 +1399,44 @@ func readState(t *testing.T, configDir, clusterName string) *interfaces.ClusterS
 	}
 	return state
 }
+
+// TestCreateMemoryPreflight asserts create refuses VMs the host cannot back:
+// a single oversized master, and a combined total with an already-running
+// cluster. Calibrated on hardware: a 19456 MiB VM on a 24 GiB host works, a
+// 20480 MiB VM thrashes the host — hence the 5120 MiB reserve.
+func TestCreateMemoryPreflight(t *testing.T) {
+	cfg, deps, bundle := newTestEnv(t)
+	bundle.Host.PhysicalMemBytes = 24576 << 20 // 24 GiB host
+	mgr := app.NewClusterManager(cfg, deps)
+
+	// Single VM over the cap: 20480 + 5120 reserve > 24576.
+	big := newTestCluster("big")
+	big.MasterRAM = 20480
+	err := mgr.Create(context.Background(), big)
+	if err == nil || !strings.Contains(err.Error(), "--master-ram") {
+		t.Fatalf("oversized master not blocked with --master-ram hint: %v", err)
+	}
+
+	// Fits alone: 16000 + 5120 <= 24576.
+	one := newTestCluster("one")
+	one.MasterRAM = 16000
+	if err := mgr.Create(context.Background(), one); err != nil {
+		t.Fatalf("fitting cluster blocked: %v", err)
+	}
+
+	// Second cluster while the first's VM is running: 16000+8000+5120 > 24576.
+	two := newTestCluster("two")
+	two.MasterRAM = 8000
+	err = mgr.Create(context.Background(), two)
+	if err == nil || !strings.Contains(err.Error(), "easyshift stop one") {
+		t.Fatalf("combined overflow not blocked with stop hint: %v", err)
+	}
+
+	// After stopping the first, the second fits.
+	bundle.VM.SetRunning("master-0-one", false)
+	two2 := newTestCluster("twofits")
+	two2.MasterRAM = 8000
+	if err := mgr.Create(context.Background(), two2); err != nil {
+		t.Fatalf("second cluster blocked after first stopped: %v", err)
+	}
+}

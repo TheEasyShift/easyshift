@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/TheEasyShift/easyshift/interfaces"
@@ -73,4 +74,27 @@ func (SystemHostInspector) ARPLookup(mac string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// PhysicalMemoryBytes returns installed RAM from /proc/meminfo's MemTotal.
+func (SystemHostInspector) PhysicalMemoryBytes() (uint64, error) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, fmt.Errorf("read /proc/meminfo: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			break
+		}
+		kib, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse MemTotal %q: %w", line, err)
+		}
+		return kib * 1024, nil
+	}
+	return 0, fmt.Errorf("MemTotal not found in /proc/meminfo")
 }
