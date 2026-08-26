@@ -1,98 +1,52 @@
 # Roadmap
 
-Pending work, grouped by feature. Detailed designs live in
-`docs/superpowers/specs/`, execution plans in `docs/superpowers/plans/`.
+Pending work now lives in [GitHub issues](https://github.com/TheEasyShift/easyshift/issues);
+this file is the index. Detailed designs live in `docs/superpowers/specs/`,
+execution plans in `docs/superpowers/plans/`.
 
 ## macOS (Apple Silicon) backend — merged
 
 Done on hardware: full SNO convergence via the console-driven install→EFI
-transition, Rosetta amd64 translation through CRI-O from first boot (needed
-the virtiofs share mounted with `context=container_file_t` and the
-`create manifests` ordering fix — see the specs), `easyshift stop`/`start`,
-and the `--master-disk` flag.
+transition, Rosetta amd64 translation through CRI-O from first boot,
+`easyshift stop`/`start`, `--master-disk`, and the host memory preflight.
 
-- [ ] **Two-cluster DR check (plan Task 13, step 2) — deferred, needs a
-      bigger host (≥ 48 GB RAM)**: the 24 GB dev Mac cannot keep two active
-      16 GB SNO VMs alive (30 GB swap exhausted, apiserver refusals, and the
-      second cluster's machine-config daemon wedged its API watches — see the
-      2026-08-25 update in the Phase B spike spec). Guest↔guest reachability
-      between two NAT clusters on the shared vmnet subnet plus
-      host→both-APIs; record the outcome in the spec's "Open risks".
-- [ ] **Bridge mode on macOS**: deferred this phase (`InspectBridge` is a stub
-      on darwin). Needs a vmnet bridged-mode story before LAN-reachable
-      clusters work on Mac.
+- [#23](https://github.com/TheEasyShift/easyshift/issues/23) — two-cluster
+  DR check (needs a ≥ 48 GB host)
+- [#24](https://github.com/TheEasyShift/easyshift/issues/24) — bridge mode
+  on macOS
+- [#30](https://github.com/TheEasyShift/easyshift/issues/30) — vmnet-helper
+  sidecar dies with the invoking process group
 
-## Image baking (`--bake-images`) — merged (#17) + follow-up fixes
+## Image baking (`--bake-images`) — merged, macOS-validated
 
-**Validated end-to-end on macOS hardware (2026-08-25)**: a clean
-`create --bake-images` converged in ~25.5 min (storeless baseline: 29 min)
-with the store mounted read-only from first boot, CRI-O serving ~173 store
-images via the crio drop-in, only 8 network image pulls and 1.0 GiB total RX
-in 20 min (the broken run pulled 7.1 GiB in five). Rosetta amd64 execution
-also verified from first boot. Three hardware-found fixes merged in #18:
-APFS-clone-aware disk preflight, `create manifests` before extra-manifest
-drops (they were silently ignored), and the CRI-O drop-in replacing the
-unsupported `storage.conf.d` mechanism.
+End-to-end validated on macOS hardware (2026-08-25): store served ~173
+images, 8 network pulls / 1.0 GiB RX total, Rosetta from first boot.
 
-- [ ] **Productize the macOS store builder.** skopeo cannot author an overlay
-      container store on macOS (Linux-only graph driver), so the baker's
-      skopeo step fails on a Mac. The validated workaround built the store
-      inside the podman machine and copied out `store.img` (bake stage's
-      `Ready()` then skips the build). Implement that as the darwin baker
-      backend (podman machine or any Linux builder), including multi-arch
-      (`--all`) copies — the spike store was aarch64-only.
-- [ ] **Linux-side validation**: the qcow2/virt-make-fs/libvirt-pool variant
-      of the attach path has not run against a real Linux host.
-- [ ] **Offline installs** (the end-goal baking enables). Residual online
-      dependencies measured on hardware (2026-08-25): the three OLM catalog
-      indexes (fix: ship an OperatorHub disableAllDefaultSources manifest when
-      baking), the two insights-runtime images whose imagePullPolicy=Always
-      bypasses the store (fix: disable Insights, disconnected-style), and —
-      the real blocker — magic DNS: sslip.io names resolve via public
-      nameservers, so api/api-int/*.apps are unresolvable offline on both host
-      and node. Needs a local answer for the cluster domain (host dnsmasq /
-      hosts injection + node-side resolution) or a non-magic local domain
-      mode. Binaries + RHCOS are already cached per version.
+- [#25](https://github.com/TheEasyShift/easyshift/issues/25) — productize
+  the macOS store builder (podman machine)
+- [#26](https://github.com/TheEasyShift/easyshift/issues/26) — Linux-side
+  validation of the qcow2/libvirt path
 
-## Storage (`--odf`) — day-2 and offline follow-ups
+Offline installs are **not planned**: magic DNS resolves through public
+nameservers by design, and easyshift accepts that online dependency. The
+2026-08-25 gap analysis (catalog indexes, `imagePullPolicy: Always` images,
+DNS) is preserved in git history should this ever revisit.
 
-See [docs/dev/odf.md](docs/dev/odf.md) and
-[docs/superpowers/specs/2026-08-25-odf-single-node-design.md](docs/superpowers/specs/2026-08-25-odf-single-node-design.md).
+## Storage (`--odf`) — merged (trim, never disable)
 
-- [ ] **Validate full-feature `--odf` on a big host** (post-#20: trim, never
-      disable — NooBaa/RGW/ODF monitoring enabled, floor 24576 MiB). Does not
-      fit the 24 GB dev Mac; run on the 36 GB macOS or the 128 GB Linux host:
-      `easyshift create -n odffull --odf --master-disk 60`, then StorageCluster
-      Ready, HEALTH_OK, both StorageClasses, noobaa/rgw pods Running, an
-      ObjectBucketClaim binds, PVC write test. On Linux this same run doubles
-      as the first Linux-side validation of the qcow2/libvirt data-disk path.
-- [ ] **`--odf-profile`** — expose ODF's native `resourceProfile`
-      (lean/balanced/performance, `pkg/defaults/resources.go`) plus count
-      knobs (OSD count, RGW instances) for hosts with real memory. Measured
-      request math: dev-trimmed ~19 GiB; lean all-features ~47 GiB (~64 GB
-      host, or ~48 GB with a single OSD and object off); balanced ~66 GiB
-      (~96 GB host). VM sizes run ~3–4 GiB above requests.
-- [ ] **`easyshift odf remove` (day-2, keep the cluster).** `install-odf`'s
-      `Rollback` is intentionally a no-op — it only runs during
-      `easyshift delete`, where the VM and both disks are destroyed moments
-      later anyway. A standalone command to strip ODF off a *running*
-      cluster without deleting it doesn't exist yet, and needs the recipe's
-      real finalizer-ordered teardown (StorageCluster → operators →
-      VG/disk) that the no-op rollback deliberately skips.
-- [ ] **`--odf` conflicts with the future offline-install mode.** `--odf`
-      installs `lvms-operator` and `odf-operator` from the default
-      `redhat-operators` OperatorHub catalog, which requires network access
-      to the catalog index. The offline-install roadmap item (see
-      "Offline installs" above) disables exactly those default catalogs;
-      the two features can't be combined until the catalog indexes ODF/LVMS
-      need are mirrored into the image bake.
+See [docs/dev/odf.md](docs/dev/odf.md) and the
+[design spec](docs/superpowers/specs/2026-08-25-odf-single-node-design.md).
+
+- [#27](https://github.com/TheEasyShift/easyshift/issues/27) — validate
+  full-feature `--odf` on a ≥ 36 GB host
+- [#28](https://github.com/TheEasyShift/easyshift/issues/28) —
+  `--odf-profile` (ODF native resourceProfile + count knobs)
+- [#29](https://github.com/TheEasyShift/easyshift/issues/29) — day-2
+  `easyshift odf remove`
 
 ## Later phases (per project vision)
 
-- [ ] vmnet-helper sidecar dies with the invoking process group while vfkit
-      survives (VM left networkless); `start` on a running VM should detect
-      and respawn a dead sidecar.
-- [ ] Worker nodes (`addnode`) — CLI surface exists (`--workers` must be 0
-      today).
-- [ ] Linux distro coverage beyond the current dev targets; keep mac + Linux
-      at feature parity where the hypervisor allows.
+- [#31](https://github.com/TheEasyShift/easyshift/issues/31) — worker nodes
+  (`addnode`)
+- [#32](https://github.com/TheEasyShift/easyshift/issues/32) — Linux distro
+  coverage and mac/Linux feature parity
