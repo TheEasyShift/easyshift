@@ -18,9 +18,6 @@ and the `--master-disk` flag.
       2026-08-25 update in the Phase B spike spec). Guest↔guest reachability
       between two NAT clusters on the shared vmnet subnet plus
       host→both-APIs; record the outcome in the spec's "Open risks".
-- [ ] **Memory preflight**: warn (or block) at create when the combined RAM
-      of running easyshift VMs plus the new master would exceed physical RAM;
-      suggest `easyshift stop <other>` or a lower `--master-ram`.
 - [ ] **Bridge mode on macOS**: deferred this phase (`InspectBridge` is a stub
       on darwin). Needs a vmnet bridged-mode story before LAN-reachable
       clusters work on Mac.
@@ -92,9 +89,6 @@ See [docs/dev/odf.md](docs/dev/odf.md) and
 
 ## Later phases (per project vision)
 
-- [ ] `--master-ram` default (32768) exceeds the Virtualization.framework cap
-      on small hosts (vfkit crash-loops; the install watchdog then flips a
-      dead install VM to the run phase) — host-RAM-aware cap or preflight.
 - [ ] vmnet-helper sidecar dies with the invoking process group while vfkit
       survives (VM left networkless); `start` on a running VM should detect
       and respawn a dead sidecar.

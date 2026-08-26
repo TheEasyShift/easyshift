@@ -51,6 +51,9 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 	if !hasVT {
 		return fmt.Errorf("host CPU does not advertise vmx/svm — virtualization extensions are required")
 	}
+	if err := s.checkHostMemory(ctx, sc); err != nil {
+		return err
+	}
 	avail, err := s.host.AvailableDiskBytes(sc.Config.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("query disk space at %s: %w", sc.Config.ConfigDir, err)
@@ -86,6 +89,51 @@ func (s *Stage) Preflight(ctx context.Context, sc *interfaces.StageContext) erro
 		}
 	}
 	return nil
+}
+
+// hostMemoryReserveMiB is what the host OS keeps for itself when sizing VMs.
+// Calibrated on hardware (24 GiB Mac mini): a 19456 MiB VM ran fine, a
+// 20480 MiB VM thrashed the host into a load-300 swap spiral — and
+// 24576 - 5120 = 19456. This same check also catches requests beyond
+// Virtualization.framework's per-VM cap (e.g. the 32768 default on a 24 GiB
+// host), which would otherwise crash-loop vfkit at launch.
+const hostMemoryReserveMiB = 5120
+
+// checkHostMemory refuses to create a master whose RAM, plus the RAM of
+// every other easyshift cluster whose master VM is currently running, would
+// exceed physical memory minus the host reserve. Oversubscribing does not
+// fail cleanly — it thrashes the whole host — so this blocks with the fix in
+// the message instead of warning. Liveness is probed per VM (the persisted
+// cluster state can be stale). A failed physical-memory probe skips the
+// check: it is a guard, not a gate on exotic hosts.
+func (s *Stage) checkHostMemory(ctx context.Context, sc *interfaces.StageContext) error {
+	physBytes, err := s.host.PhysicalMemoryBytes()
+	if err != nil || physBytes == 0 {
+		return nil
+	}
+	physMiB := physBytes >> 20
+	totalMiB := uint64(sc.Cluster.MasterRAM)
+	var running []string
+	for _, other := range sc.Config.Clusters {
+		if other.Name == sc.Cluster.Name {
+			continue
+		}
+		up, err := s.vm.IsRunning(ctx, fmt.Sprintf("master-0-%s", other.Name))
+		if err != nil || !up {
+			continue
+		}
+		totalMiB += uint64(other.MasterRAM)
+		running = append(running, other.Name)
+	}
+	if totalMiB+hostMemoryReserveMiB <= physMiB {
+		return nil
+	}
+	if len(running) > 0 {
+		return fmt.Errorf("not enough host memory: this master (%d MiB) plus running cluster(s) %v (%d MiB total) exceeds physical %d MiB minus the %d MiB host reserve; stop one first (e.g. `easyshift stop %s`) or lower --master-ram",
+			sc.Cluster.MasterRAM, running, totalMiB, physMiB, hostMemoryReserveMiB, running[0])
+	}
+	return fmt.Errorf("not enough host memory: --master-ram %d MiB exceeds physical %d MiB minus the %d MiB host reserve (max usable: %d MiB); lower --master-ram",
+		sc.Cluster.MasterRAM, physMiB, hostMemoryReserveMiB, physMiB-hostMemoryReserveMiB)
 }
 
 func (s *Stage) Apply(ctx context.Context, sc *interfaces.StageContext) error {

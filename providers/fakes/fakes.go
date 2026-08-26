@@ -751,6 +751,9 @@ type HostInspector struct {
 	DiskAvailable uint64
 	// ARPTable maps MAC -> IP; lookups miss return "".
 	ARPTable map[string]string
+	// PhysicalMemBytes is returned by PhysicalMemoryBytes; 0 means a roomy
+	// default (256 GiB) so only memory-preflight tests need to set it.
+	PhysicalMemBytes uint64
 	// TCPReachable maps addr -> nil (reachable) or error (unreachable).
 	// Missing entries default to reachable.
 	TCPReachable map[string]error
@@ -804,6 +807,15 @@ func (h *HostInspector) AvailableDiskBytes(_ string) (uint64, error) {
 		return 1 << 62, nil
 	}
 	return h.DiskAvailable, nil
+}
+
+func (h *HostInspector) PhysicalMemoryBytes() (uint64, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.PhysicalMemBytes == 0 {
+		return 256 << 30, nil
+	}
+	return h.PhysicalMemBytes, nil
 }
 
 func (h *HostInspector) ARPLookup(mac string) (string, error) {

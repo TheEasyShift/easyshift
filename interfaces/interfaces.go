@@ -336,6 +336,10 @@ type HostInspector interface {
 	InspectBridge(name string) (BridgeInfo, error)
 	LookPath(name string) error
 	AvailableDiskBytes(path string) (uint64, error)
+	// PhysicalMemoryBytes returns the host's installed RAM. Used by the
+	// create-master-vms memory preflight to refuse VM totals the host cannot
+	// back (oversubscription thrashes the host into an unusable swap spiral).
+	PhysicalMemoryBytes() (uint64, error)
 	ARPLookup(mac string) (string, error)
 	DialTCP(addr string, timeout time.Duration) error
 }

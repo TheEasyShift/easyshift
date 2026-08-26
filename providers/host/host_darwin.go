@@ -3,7 +3,10 @@
 package host
 
 import (
+	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/TheEasyShift/easyshift/interfaces"
 )
@@ -29,4 +32,17 @@ func (SystemHostInspector) InspectBridge(_ string) (interfaces.BridgeInfo, error
 // deferred); return "" (no entry).
 func (SystemHostInspector) ARPLookup(_ string) (string, error) {
 	return "", nil
+}
+
+// PhysicalMemoryBytes returns installed RAM via sysctl hw.memsize.
+func (SystemHostInspector) PhysicalMemoryBytes() (uint64, error) {
+	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	if err != nil {
+		return 0, fmt.Errorf("sysctl hw.memsize: %w", err)
+	}
+	v, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse hw.memsize %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	return v, nil
 }
