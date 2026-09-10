@@ -381,6 +381,9 @@ func (m *VMManager) ImportDisk(_ context.Context, _, volName, localPath string) 
 		return "", fmt.Errorf("vfkit: import disk: source %s: %w (did the bake-image-store stage run?)", localPath, err)
 	}
 	dst := filepath.Join(m.stateDir, volName)
+	if err := os.MkdirAll(m.stateDir, 0o755); err != nil {
+		return "", fmt.Errorf("vfkit: import disk dir: %w", err)
+	}
 	_ = os.Remove(dst)
 	if out, err := exec.Command("cp", "-c", localPath, dst).CombinedOutput(); err != nil {
 		if copyErr := copyFile(localPath, dst); copyErr != nil {
@@ -427,6 +430,9 @@ func (m *VMManager) createDisk(path string, sizeGiB int) error {
 	}
 	if sizeGiB <= 0 {
 		sizeGiB = 120
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("vfkit: create disk dir: %w", err)
 	}
 	f, err := os.Create(path)
 	if err != nil {
